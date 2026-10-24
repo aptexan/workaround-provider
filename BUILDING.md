@@ -12,6 +12,9 @@ below from the repository directory containing `CMakeLists.txt`.
   their CMake package configuration files.
 - The Protobuf compiler (`protoc`) and gRPC C++ generator (`grpc_cpp_plugin`).
 
+For reference on installing gRPC and its dependencies, see the official
+[gRPC C++ quick start](https://grpc.io/docs/languages/cpp/quickstart/).
+
 Use a compatible set of dependency libraries and code generators from the same
 installation. The repository does not pin dependency versions. Abseil must provide
 the `absl::check`, `absl::flags`, `absl::flags_parse`, `absl::log`, and
