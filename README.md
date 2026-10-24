@@ -1,1 +1,1 @@
-# workaround-provider
+# tofu-plugin-cpp

@@ -1,0 +1,154 @@
+@cosmo:~/tmp$ cd ~/wpe
+[cosmo:~/wpe] [main|…1] 
+21:06 $ TF_LOG=DEBUG tofu plan
+2026-10-21T21:07:10.532-0500 [INFO]  OpenTofu version: 1.13.1
+2026-10-21T21:07:10.532-0500 [DEBUG] This is an official build of OpenTofu
+2026-10-21T21:07:10.532-0500 [DEBUG] using github.com/hashicorp/go-getter v1.8.8
+2026-10-21T21:07:10.532-0500 [DEBUG] using github.com/hashicorp/hcl v1.0.1-vault-7
+2026-10-21T21:07:10.532-0500 [DEBUG] using github.com/opentofu/hcl/v2 v2.20.2-0.20260427110253-11bc5ebf0f63
+2026-10-21T21:07:10.532-0500 [DEBUG] using github.com/opentofu/registry-address/v2 v2.0.0-20260307135325-45f3562374e4
+2026-10-21T21:07:10.532-0500 [DEBUG] using github.com/opentofu/svchost v0.0.0-20260410171206-1a42986aa3f4
+2026-10-21T21:07:10.532-0500 [DEBUG] using github.com/zclconf/go-cty v1.19.0
+2026-10-21T21:07:10.532-0500 [INFO]  Go runtime version: go1.27.1
+2026-10-21T21:07:10.532-0500 [INFO]  CLI args: []string{"tofu", "plan"}
+2026-10-21T21:07:10.532-0500 [DEBUG] Attempting to open CLI config file: /home/prasad/.tofurc
+2026-10-21T21:07:10.532-0500 [INFO]  Loading CLI configuration from /home/prasad/.tofurc
+2026-10-21T21:07:10.533-0500 [DEBUG] Explicit provider installation configuration is set
+2026-10-21T21:07:10.534-0500 [DEBUG] Found the config directory: /home/prasad/.terraform.d
+2026-10-21T21:07:10.535-0500 [DEBUG] Provider registry.opentofu.org/aptexan/workaround is overridden by dev_overrides
+2026-10-21T21:07:10.535-0500 [DEBUG] Provider registry.opentofu.org/aptexan/workaround is overridden to load from /home/prasad/tpc/build
+2026-10-21T21:07:10.535-0500 [DEBUG] checking for provisioner in "."
+2026-10-21T21:07:10.535-0500 [DEBUG] checking for provisioner in "/usr/bin"
+2026-10-21T21:07:10.535-0500 [DEBUG] Provider registry.opentofu.org/aptexan/workaround is overridden by dev_overrides
+╷
+│ Warning: Provider development overrides are in effect
+│ 
+│ The following provider development overrides are set in the CLI configuration:
+│  - aptexan/workaround in /home/prasad/tpc/build
+│ 
+│ The behavior may therefore not match any released version of the provider and applying changes may cause the state to become incompatible with published releases.
+╵
+2026-10-21T21:07:10.536-0500 [INFO]  backend/local: starting Plan operation
+2026-10-21T21:07:10.536-0500 [DEBUG] Config.VerifyDependencySelections: skipping registry.opentofu.org/aptexan/workaround because it's overridden by a special configuration setting
+2026-10-21T21:07:10.537-0500 [DEBUG] created provider logger: level=debug
+2026-10-21T21:07:10.537-0500 [DEBUG] provider: starting plugin: path=/home/prasad/tpc/build/terraform-provider-workaround args=["/home/prasad/tpc/build/terraform-provider-workaround"]
+2026-10-21T21:07:10.537-0500 [DEBUG] provider: plugin started: path=/home/prasad/tpc/build/terraform-provider-workaround pid=52438
+2026-10-21T21:07:10.537-0500 [DEBUG] provider: waiting for RPC address: plugin=/home/prasad/tpc/build/terraform-provider-workaround
+2026-10-21T21:07:10.552-0500 [DEBUG] provider: using plugin: version=5
+2026-10-21T21:07:10.552-0500 [DEBUG] provider.terraform-provider-workaround: Server listening on 127.0.0.1:35869
+2026-10-21T21:07:10.554-0500 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unimplemented desc = "
+2026-10-21T21:07:10.555-0500 [DEBUG] No provider meta schema returned
+2026-10-21T21:07:12.558-0500 [WARN]  provider: plugin failed to exit gracefully
+2026-10-21T21:07:12.559-0500 [ERROR] provider: plugin process exited: plugin=/home/prasad/tpc/build/terraform-provider-workaround id=52438 error="signal: killed"
+2026-10-21T21:07:12.559-0500 [DEBUG] Building and walking validate graph
+2026-10-21T21:07:12.560-0500 [DEBUG] ProviderTransformer: "workaround_example.example" (*tofu.NodeValidatableResource) needs provider["registry.opentofu.org/aptexan/workaround"]
+2026-10-21T21:07:12.560-0500 [DEBUG] ReferenceTransformer: "workaround_example.example" references: []
+2026-10-21T21:07:12.560-0500 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/aptexan/workaround\"]" references: []
+2026-10-21T21:07:12.560-0500 [DEBUG] Starting graph walk: walkValidate
+2026-10-21T21:07:12.560-0500 [DEBUG] created provider logger: level=debug
+2026-10-21T21:07:12.560-0500 [DEBUG] provider: starting plugin: path=/home/prasad/tpc/build/terraform-provider-workaround args=["/home/prasad/tpc/build/terraform-provider-workaround"]
+2026-10-21T21:07:12.561-0500 [DEBUG] provider: plugin started: path=/home/prasad/tpc/build/terraform-provider-workaround pid=52476
+2026-10-21T21:07:12.561-0500 [DEBUG] provider: waiting for RPC address: plugin=/home/prasad/tpc/build/terraform-provider-workaround
+2026-10-21T21:07:12.580-0500 [DEBUG] provider: using plugin: version=5
+2026-10-21T21:07:12.580-0500 [DEBUG] provider.terraform-provider-workaround: Server listening on 127.0.0.1:38631
+2026-10-21T21:07:12.582-0500 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unimplemented desc = "
+2026-10-21T21:07:14.583-0500 [WARN]  provider: plugin failed to exit gracefully
+2026-10-21T21:07:14.586-0500 [ERROR] provider: plugin process exited: plugin=/home/prasad/tpc/build/terraform-provider-workaround id=52476 error="signal: killed"
+2026-10-21T21:07:14.586-0500 [INFO]  backend/local: plan calling Plan
+2026-10-21T21:07:14.586-0500 [DEBUG] Building and walking plan graph for NormalMode
+2026-10-21T21:07:14.586-0500 [DEBUG] ProviderTransformer: "workaround_example.example (expand)" (*tofu.nodeExpandPlannableResource) needs provider["registry.opentofu.org/aptexan/workaround"]
+2026-10-21T21:07:14.586-0500 [DEBUG] ReferenceTransformer: "workaround_example.example (expand)" references: []
+2026-10-21T21:07:14.587-0500 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/aptexan/workaround\"]" references: []
+2026-10-21T21:07:14.587-0500 [DEBUG] Starting graph walk: walkPlan
+2026-10-21T21:07:14.587-0500 [DEBUG] created provider logger: level=debug
+2026-10-21T21:07:14.588-0500 [DEBUG] provider: starting plugin: path=/home/prasad/tpc/build/terraform-provider-workaround args=["/home/prasad/tpc/build/terraform-provider-workaround"]
+2026-10-21T21:07:14.588-0500 [DEBUG] provider: plugin started: path=/home/prasad/tpc/build/terraform-provider-workaround pid=52509
+2026-10-21T21:07:14.588-0500 [DEBUG] provider: waiting for RPC address: plugin=/home/prasad/tpc/build/terraform-provider-workaround
+2026-10-21T21:07:14.608-0500 [DEBUG] provider: using plugin: version=5
+2026-10-21T21:07:14.608-0500 [DEBUG] provider.terraform-provider-workaround: Server listening on 127.0.0.1:43437
+2026-10-21T21:07:14.610-0500 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unimplemented desc = "
+2026-10-21T21:07:14.611-0500 [DEBUG] Resource instance state not found for node "workaround_example.example", instance workaround_example.example
+2026-10-21T21:07:14.611-0500 [DEBUG] ReferenceTransformer: "workaround_example.example" references: []
+2026-10-21T21:07:14.611-0500 [DEBUG] refresh: workaround_example.example: no state, so not refreshing
+2026-10-21T21:07:16.614-0500 [WARN]  provider: plugin failed to exit gracefully
+2026-10-21T21:07:16.616-0500 [ERROR] provider: plugin process exited: plugin=/home/prasad/tpc/build/terraform-provider-workaround id=52509 error="signal: killed"
+2026-10-21T21:07:16.616-0500 [DEBUG] building apply graph to check for errors
+2026-10-21T21:07:16.616-0500 [DEBUG] Resource state not found for node "workaround_example.example", instance workaround_example.example
+2026-10-21T21:07:16.616-0500 [DEBUG] ProviderTransformer: "workaround_example.example (expand)" (*tofu.nodeExpandApplyableResource) needs provider["registry.opentofu.org/aptexan/workaround"]
+2026-10-21T21:07:16.616-0500 [DEBUG] ProviderTransformer: "workaround_example.example" (*tofu.NodeApplyableResourceInstance) needs provider["registry.opentofu.org/aptexan/workaround"]
+2026-10-21T21:07:16.617-0500 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/aptexan/workaround\"]" references: []
+2026-10-21T21:07:16.617-0500 [DEBUG] ReferenceTransformer: "workaround_example.example (expand)" references: []
+2026-10-21T21:07:16.617-0500 [DEBUG] ReferenceTransformer: "workaround_example.example" references: []
+2026-10-21T21:07:16.617-0500 [INFO]  backend/local: plan operation completed
+
+OpenTofu used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  + create
+
+OpenTofu will perform the following actions:
+
+  # workaround_example.example will be created
+  + resource "workaround_example" "example" {}
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Note: You didn't use the -out option to save this plan, so OpenTofu can't guarantee to take exactly these actions if you run "tofu apply" now.
+[cosmo:~/wpe] [main|…1] 
+21:07 $ tofu apply
+╷
+│ Warning: Provider development overrides are in effect
+│ 
+│ The following provider development overrides are set in the CLI configuration:
+│  - aptexan/workaround in /home/prasad/tpc/build
+│ 
+│ The behavior may therefore not match any released version of the provider and applying changes may cause the state to become incompatible with published releases.
+╵
+
+OpenTofu used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  + create
+
+OpenTofu will perform the following actions:
+
+  # workaround_example.example will be created
+  + resource "workaround_example" "example" {}
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+Do you want to perform these actions?
+  OpenTofu will perform the actions described above.
+  Only 'yes' will be accepted to approve.
+
+  Enter a value: yes
+
+workaround_example.example: Creating...
+workaround_example.example: Creation complete after 0s
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+[cosmo:~/wpe] [main|…2] 
+21:39 $ tofu destroy -auto-approve
+╷
+│ Warning: Provider development overrides are in effect
+│ 
+│ The following provider development overrides are set in the CLI configuration:
+│  - aptexan/workaround in /home/prasad/tpc/build
+│ 
+│ The behavior may therefore not match any released version of the provider and applying changes may cause the state to become incompatible with published releases.
+╵
+workaround_example.example: Refreshing state...
+
+OpenTofu used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  - destroy
+
+OpenTofu will perform the following actions:
+
+  # workaround_example.example will be destroyed
+  - resource "workaround_example" "example" {}
+
+Plan: 0 to add, 0 to change, 1 to destroy.
+workaround_example.example: Destroying...
+workaround_example.example: Destruction complete after 0s
+
+Destroy complete! Resources: 1 destroyed.
+[cosmo:~/wpe] [main|…2] 
+

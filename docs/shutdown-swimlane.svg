@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 800" font-family="system-ui, sans-serif" font-size="12">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#334155"/>
+    </marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#15803d"/>
+    </marker>
+  </defs>
+  <rect width="920" height="800" fill="#ffffff"/>
+  <text x="460" y="24" text-anchor="middle" font-size="16" font-weight="600" fill="#0f172a">tofu-core ↔ tofu-plugin.cpp: lifecycle and GRPCController.Shutdown</text>
+
+  <!-- lane backgrounds -->
+  <rect x="20"  y="40" width="200" height="740" fill="#eff6ff" stroke="#93c5fd"/>
+  <rect x="240" y="40" width="200" height="740" fill="#f0fdf4" stroke="#86efac"/>
+  <rect x="460" y="40" width="200" height="740" fill="#fefce8" stroke="#fde047"/>
+  <rect x="680" y="40" width="220" height="740" fill="#fdf2f8" stroke="#f9a8d4"/>
+  <g font-weight="600" text-anchor="middle" fill="#0f172a">
+    <text x="120" y="60">OpenTofu Core</text>
+    <text x="340" y="60">Plugin: main thread</text>
+    <text x="560" y="60">Plugin: gRPC worker thread</text>
+    <text x="790" y="60">Plugin: shutdown_thread</text>
+  </g>
+  <g font-size="10" text-anchor="middle" fill="#475569">
+    <text x="120" y="74">(go-plugin client)</text>
+    <text x="340" y="74">RunServer()</text>
+    <text x="560" y="74">ControllerServiceImpl / Provider</text>
+    <text x="790" y="74">spawned on demand</text>
+  </g>
+  <!-- lifelines -->
+  <g stroke="#94a3b8" stroke-dasharray="4 4">
+    <line x1="120" y1="80" x2="120" y2="770"/>
+    <line x1="340" y1="80" x2="340" y2="770"/>
+    <line x1="560" y1="80" x2="560" y2="770"/>
+    <line x1="790" y1="80" x2="790" y2="770"/>
+  </g>
+
+  <!-- 1 spawn -->
+  <g stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <line x1="120" y1="105" x2="338" y2="105"/>
+  </g>
+  <text x="230" y="97" text-anchor="middle" fill="#0f172a">① exec plugin binary</text>
+  <text x="230" y="119" text-anchor="middle" font-size="10" fill="#475569">TF_DISABLE_PLUGIN_TLS=1, magic cookie</text>
+
+  <!-- 2 build server -->
+  <rect x="250" y="135" width="180" height="46" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="340" y="152" text-anchor="middle" fill="#0f172a">② BuildAndStart()</text>
+  <text x="340" y="168" text-anchor="middle" font-size="10" fill="#475569">127.0.0.1:0 → picks free port</text>
+
+  <!-- 3 handshake -->
+  <g stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <line x1="340" y1="215" x2="122" y2="215"/>
+  </g>
+  <text x="230" y="199" text-anchor="middle" fill="#0f172a">③ stdout handshake line</text>
+  <text x="230" y="232" text-anchor="middle" font-size="10" fill="#475569">1|5|tcp|127.0.0.1:PORT|grpc|</text>
+
+  <!-- 4 wait -->
+  <rect x="250" y="250" width="180" height="34" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="340" y="271" text-anchor="middle" fill="#0f172a">④ server-&gt;Wait() — blocks</text>
+
+  <!-- 5 dial + provider RPCs -->
+  <g stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <line x1="120" y1="320" x2="558" y2="320"/>
+  </g>
+  <text x="340" y="312" text-anchor="middle" fill="#0f172a">⑤ dial PORT, then tfplugin5.Provider RPCs</text>
+  <text x="340" y="336" text-anchor="middle" font-size="10" fill="#475569">GetSchema, Configure, Plan/ApplyResourceChange…</text>
+  <rect x="470" y="345" width="180" height="26" rx="4" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="560" y="362" text-anchor="middle" fill="#0f172a">handlers fill responses</text>
+  <g stroke="#15803d" stroke-width="1.5" fill="none" marker-end="url(#r)">
+    <line x1="560" y1="388" x2="122" y2="388"/>
+  </g>
+  <text x="340" y="382" text-anchor="middle" fill="#15803d">responses (Status::OK)</text>
+
+  <!-- 6 core finished -->
+  <rect x="30" y="410" width="180" height="44" rx="4" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="120" y="428" text-anchor="middle" fill="#0f172a">⑥ plan/apply/destroy done</text>
+  <text x="120" y="443" text-anchor="middle" font-size="10" fill="#475569">go-plugin Client.Kill()</text>
+
+  <!-- 7 Shutdown RPC -->
+  <g stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <line x1="120" y1="490" x2="558" y2="490"/>
+  </g>
+  <text x="340" y="482" text-anchor="middle" font-weight="600" fill="#0f172a">⑦ plugin.GRPCController/Shutdown(Empty)</text>
+
+  <!-- 8 handler -->
+  <rect x="470" y="505" width="180" height="62" rx="4" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="560" y="522" text-anchor="middle" fill="#0f172a">⑧ Shutdown() handler</text>
+  <text x="560" y="538" text-anchor="middle" font-size="10" fill="#475569">on_shutdown_() → call_once</text>
+  <text x="560" y="553" text-anchor="middle" font-size="10" fill="#475569">spawns std::thread, returns OK</text>
+
+  <!-- spawn thread -->
+  <g stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <line x1="650" y1="545" x2="788" y2="545"/>
+  </g>
+  <text x="720" y="538" text-anchor="middle" font-size="10" fill="#0f172a">std::thread</text>
+
+  <!-- 9 reply -->
+  <g stroke="#15803d" stroke-width="1.5" fill="none" marker-end="url(#r)">
+    <line x1="560" y1="600" x2="122" y2="600"/>
+  </g>
+  <text x="340" y="592" text-anchor="middle" fill="#15803d">⑨ Status::OK returned immediately</text>
+  <text x="340" y="616" text-anchor="middle" font-size="10" fill="#475569">handler must NOT call Shutdown itself: it waits for in-flight RPCs, including this one</text>
+
+  <!-- 10 shutdown thread -->
+  <rect x="690" y="580" width="200" height="62" rx="4" fill="#fce7f3" stroke="#db2777"/>
+  <text x="790" y="598" text-anchor="middle" fill="#0f172a">⑩ server-&gt;Shutdown(now + 1s)</text>
+  <text x="790" y="614" text-anchor="middle" font-size="10" fill="#475569">stops listener, drains the finished</text>
+  <text x="790" y="628" text-anchor="middle" font-size="10" fill="#475569">Shutdown RPC, cancels leftovers at 1s</text>
+
+  <!-- 11 wake main -->
+  <g stroke="#334155" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#a)">
+    <line x1="788" y1="665" x2="342" y2="665"/>
+  </g>
+  <text x="565" y="657" text-anchor="middle" fill="#0f172a">⑪ Wait() returns</text>
+
+  <rect x="250" y="680" width="180" height="62" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="340" y="698" text-anchor="middle" fill="#0f172a">⑫ shutdown_thread.join()</text>
+  <text x="340" y="714" text-anchor="middle" fill="#0f172a">RunServer returns,</text>
+  <text x="340" y="729" text-anchor="middle" fill="#0f172a">main returns 0 → process exits</text>
+
+  <!-- 13 exit seen -->
+  <g stroke="#15803d" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#r)">
+    <line x1="250" y1="760" x2="122" y2="760"/>
+  </g>
+  <text x="186" y="752" text-anchor="middle" font-size="10" fill="#15803d">⑬ exit seen</text>
+  <text x="120" y="776" text-anchor="middle" font-size="10" fill="#475569">Core stops waiting (no ~2 s force-kill)</text>
+</svg>
