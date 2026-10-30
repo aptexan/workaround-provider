@@ -20,20 +20,29 @@
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 
+#include <unistd.h>
+
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <condition_variable>
 #include <memory>
+#include <optional>
 #include <mutex>
+#include <random>
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/log/initialize.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_split.h"
 
 #include "grpc_broker.grpc.pb.h"
 #include "grpc_controller.grpc.pb.h"
@@ -45,7 +54,21 @@ using grpc::ServerBuilder;
 using grpc::ServerContext;
 using grpc::Status;
 
-ABSL_FLAG(uint16_t, port, 0, "Server port for the service (0 = pick a free-port)");
+ABSL_FLAG(uint16_t, port, 0,
+          "Server port for the service (0 = pick a free port, or one inside "
+          "PLUGIN_MIN_PORT..PLUGIN_MAX_PORT when Core sets them)");
+ABSL_FLAG(bool, debug, false,
+          "Debug mode: do not require the go-plugin magic cookie, so the binary "
+          "can be started by hand or under a debugger");
+
+// go-plugin's magic cookie: a fixed, public marker that tells the plugin it was
+// started by a host program and not directly by a person.
+constexpr char kMagicCookieKey[] = "TF_PLUGIN_MAGIC_COOKIE";
+constexpr char kMagicCookieValue[] =
+    "d602bf8f470bc67ca7faa0386276bbdd4330efaf76d1a219cb4d6991ca9872b2";
+
+// Provider protocol major versions this binary serves (package tfplugin5).
+constexpr int kSupportedProtocolVersions[] = {5};
 
 // Minimal implementation of the OpenTofu provider protocol (tfplugin5).
 // It exposes one resource type, "workaround_example", which has no attributes.
@@ -222,9 +245,92 @@ class BrokerServiceImpl final : public plugin::GRPCBroker::Service {
   StreamTracker& tracker_;
 };
 
-void RunServer(uint16_t port) {
-  // Loopback only; with port 0 gRPC picks a free port and reports it back.
-  std::string server_address = absl::StrFormat("127.0.0.1:%d", port);
+// Everything Core tells us through the environment before the handshake.
+struct StartupConfig {
+  int protocol_version = 0;  // the major version to advertise
+  uint16_t min_port = 0;     // both 0: no range was requested
+  uint16_t max_port = 0;
+};
+
+// Reads an optional port variable. Returns false (after a message) if it is set
+// but is not a port number.
+static bool ReadPortVariable(const char* name, uint16_t* port, bool* is_set) {
+  const char* text = std::getenv(name);
+  *is_set = text != nullptr && *text != '\0';
+  if (!*is_set) return true;
+  uint32_t value = 0;
+  if (!absl::SimpleAtoi(text, &value) || value == 0 || value > 65535) {
+    std::cerr << name << "=\"" << text << "\" is not a valid port number" << std::endl;
+    return false;
+  }
+  *port = static_cast<uint16_t>(value);
+  return true;
+}
+
+// Checks the environment the way go-plugin's server does. On failure it prints
+// why to stderr and returns nothing, so main() can exit with status 1 before any
+// handshake line is written.
+std::optional<StartupConfig> CheckStartup(bool debug) {
+  StartupConfig config;
+
+  // 1. Magic cookie.
+  const char* cookie = std::getenv(kMagicCookieKey);
+  if (!debug && (cookie == nullptr || std::string(cookie) != kMagicCookieValue)) {
+    std::cerr << "This binary is a plugin. These are not meant to be executed "
+                 "directly.\nPlease execute the program that consumes these "
+                 "plugins, which will load any plugins automatically.\n"
+                 "(To run it by hand, pass --debug.)"
+              << std::endl;
+    return std::nullopt;
+  }
+
+  // 2. Protocol version: the highest one that both sides support. The order of
+  // Core's list does not matter, and entries that are not numbers are skipped.
+  const char* offered = std::getenv("PLUGIN_PROTOCOL_VERSIONS");
+  std::vector<int> core_versions;
+  if (offered != nullptr) {
+    for (std::string_view entry : absl::StrSplit(offered, ',')) {
+      int version = 0;
+      if (absl::SimpleAtoi(entry, &version)) core_versions.push_back(version);
+    }
+  }
+  for (int ours : kSupportedProtocolVersions) {
+    if (std::find(core_versions.begin(), core_versions.end(), ours) != core_versions.end()) {
+      config.protocol_version = std::max(config.protocol_version, ours);
+    }
+  }
+  if (config.protocol_version == 0) {
+    if (debug && core_versions.empty()) {
+      // Started by hand: there is no Core to negotiate with.
+      config.protocol_version = *std::max_element(std::begin(kSupportedProtocolVersions),
+                                                  std::end(kSupportedProtocolVersions));
+    } else {
+      std::cerr << "No protocol version in common. Core offered PLUGIN_PROTOCOL_VERSIONS=\""
+                << (offered ? offered : "") << "\"; this provider serves version 5." << std::endl;
+      return std::nullopt;
+    }
+  }
+
+  // 3. Port range. Core may restrict which TCP ports a plugin may listen on.
+  bool has_min = false, has_max = false;
+  if (!ReadPortVariable("PLUGIN_MIN_PORT", &config.min_port, &has_min) ||
+      !ReadPortVariable("PLUGIN_MAX_PORT", &config.max_port, &has_max)) {
+    return std::nullopt;
+  }
+  if (has_min || has_max) {
+    if (!has_min) config.min_port = 1;
+    if (!has_max) config.max_port = 65535;
+    if (config.min_port > config.max_port) {
+      std::cerr << "PLUGIN_MIN_PORT (" << config.min_port << ") is greater than PLUGIN_MAX_PORT ("
+                << config.max_port << ")" << std::endl;
+      return std::nullopt;
+    }
+  }
+  return config;
+}
+
+// Returns 0 on a clean exit, 1 if the server could not be started.
+int RunServer(uint16_t port, const StartupConfig& config) {
   int selected_port = 0;
   ProviderServiceImpl provider_service;
   std::unique_ptr<Server> server;
@@ -246,23 +352,48 @@ void RunServer(uint16_t port) {
 
   grpc::EnableDefaultHealthCheckService(true);
   grpc::reflection::InitProtoReflectionServerBuilderPlugin();
-  ServerBuilder builder;
-  // Listen on the given address without any authentication mechanism.
-  // Core must run with TF_DISABLE_PLUGIN_TLS=1 until mutual TLS is implemented.
-  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials(),
-                           &selected_port);
-  // Register the provider service through which Core communicates with us.
-  builder.RegisterService(&provider_service);
-  builder.RegisterService(&controller_service);
-  builder.RegisterService(&stdio_service);
-  builder.RegisterService(&broker_service);
-  // Finally assemble the server.
-  server = builder.BuildAndStart();
-  if (!server || selected_port == 0) {
-    std::cerr << "Failed to start server on " << server_address << std::endl;
-    return;
+  // Loopback only, no authentication until mutual TLS is implemented (Core must
+  // run with TF_DISABLE_PLUGIN_TLS=1). A server cannot be re-bound once started,
+  // so each attempt builds a fresh one.
+  auto try_start = [&](int candidate) {
+    std::string address = absl::StrFormat("127.0.0.1:%d", candidate);
+    selected_port = 0;
+    ServerBuilder builder;
+    builder.AddListeningPort(address, grpc::InsecureServerCredentials(), &selected_port);
+    // Register the provider service through which Core communicates with us.
+    builder.RegisterService(&provider_service);
+    builder.RegisterService(&controller_service);
+    builder.RegisterService(&stdio_service);
+    builder.RegisterService(&broker_service);
+    // Finally assemble the server.
+    server = builder.BuildAndStart();
+    return server && selected_port != 0;
+  };
+  bool started = false;
+  if (port != 0 || config.max_port == 0) {
+    // An explicit --port, or no range from Core: port 0 lets gRPC pick a free one.
+    started = try_start(port);
+  } else {
+    // Try every port of the range once, beginning at a random one so that
+    // several providers started together do not all fight for the lowest port.
+    const int count = config.max_port - config.min_port + 1;
+    std::random_device random;
+    const int first = std::uniform_int_distribution<int>(0, count - 1)(random);
+    for (int i = 0; i < count && !started; ++i) {
+      started = try_start(config.min_port + (first + i) % count);
+    }
   }
-  std::cerr << "Server listening on 127.0.0.1:" << selected_port << std::endl;
+  if (!started) {
+    if (port == 0 && config.max_port != 0) {
+      std::cerr << "No free port in PLUGIN_MIN_PORT..PLUGIN_MAX_PORT (" << config.min_port
+                << ".." << config.max_port << ")" << std::endl;
+    } else {
+      std::cerr << "Failed to start server on 127.0.0.1:" << port << std::endl;
+    }
+    return 1;
+  }
+  std::cerr << "Server listening on 127.0.0.1:" << selected_port << " (pid " << getpid()
+            << ")" << std::endl;
   // go-plugin's ping asks the standard gRPC health service about the service
   // name "plugin". The default health service only knows names it was told
   // about, so without this Core's ping gets NOT_FOUND.
@@ -271,18 +402,22 @@ void RunServer(uint16_t port) {
   }
   // Handshake: only after the server is listening, since Core connects as soon
   // as it reads this line. The line must be the first thing written to stdout.
-  std::cout << absl::StrFormat("1|5|tcp|127.0.0.1:%d|grpc|\n", selected_port)
+  std::cout << absl::StrFormat("1|%d|tcp|127.0.0.1:%d|grpc|\n", config.protocol_version,
+                          selected_port)
             << std::flush;
   // Wait for the server to shutdown. Note that some other thread must be
   // responsible for shutting down the server for this call to ever return.
   server->Wait();
   // Use std::jthread for resiliency and remove join()
   if (shutdown_thread.joinable()) shutdown_thread.join();
+  return 0;
 }
 
 int main(int argc, char** argv) {
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
-  RunServer(absl::GetFlag(FLAGS_port));
-  return 0;
+  // Check the environment first: a rejected start must not print a handshake.
+  std::optional<StartupConfig> config = CheckStartup(absl::GetFlag(FLAGS_debug));
+  if (!config) return 1;
+  return RunServer(absl::GetFlag(FLAGS_port), *config);
 }
