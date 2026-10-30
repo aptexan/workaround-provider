@@ -23,8 +23,10 @@
 #include <chrono>
 #include <functional>
 #include <iostream>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -33,7 +35,9 @@
 #include "absl/log/initialize.h"
 #include "absl/strings/str_format.h"
 
+#include "grpc_broker.grpc.pb.h"
 #include "grpc_controller.grpc.pb.h"
+#include "grpc_stdio.grpc.pb.h"
 #include "tfplugin5.grpc.pb.h"
 
 using grpc::Server;
@@ -137,6 +141,87 @@ class ControllerServiceImpl final : public plugin::GRPCController::Service {
   std::function<void()> on_shutdown_;
 };
 
+// Keeps track of the long-lived streams (stdio, broker) so that they can be
+// cancelled on shutdown. Server::Shutdown() would otherwise wait for them until
+// its deadline, and Core only allows ~2 s for the process to exit.
+class StreamTracker {
+ public:
+  // Registers a running stream. Returns false if shutdown has already begun.
+  bool Add(ServerContext* context) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopping_) return false;
+    streams_.insert(context);
+    return true;
+  }
+
+  void Remove(ServerContext* context) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    streams_.erase(context);
+  }
+
+  // Blocks until shutdown begins or the client cancels the stream.
+  void WaitUntilDone(ServerContext* context) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    while (!stopping_ && !context->IsCancelled()) {
+      stopped_.wait_for(lock, std::chrono::milliseconds(100));
+    }
+  }
+
+  void CancelAll() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stopping_ = true;
+    for (ServerContext* context : streams_) context->TryCancel();
+    stopped_.notify_all();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable stopped_;
+  std::set<ServerContext*> streams_;
+  bool stopping_ = false;
+};
+
+// go-plugin's GRPCStdio: Core opens this stream right after connecting and
+// mirrors whatever arrives into its own log. We keep logging on the original
+// stderr (which Core already captures), so the stream stays open and idle.
+class StdioServiceImpl final : public plugin::GRPCStdio::Service {
+ public:
+  explicit StdioServiceImpl(StreamTracker& tracker) : tracker_(tracker) {}
+
+  Status StreamStdio(ServerContext* context, const google::protobuf::Empty*,
+                     grpc::ServerWriter<plugin::StdioData>*) override {
+    if (!tracker_.Add(context)) return Status::OK;
+    tracker_.WaitUntilDone(context);
+    tracker_.Remove(context);
+    return Status::OK;
+  }
+
+ private:
+  StreamTracker& tracker_;
+};
+
+// go-plugin's GRPCBroker: used to negotiate extra connections between the two
+// sides. The provider never needs one, so we accept the stream, ignore what
+// Core sends and end when Core closes it or when we shut down.
+class BrokerServiceImpl final : public plugin::GRPCBroker::Service {
+ public:
+  explicit BrokerServiceImpl(StreamTracker& tracker) : tracker_(tracker) {}
+
+  Status StartStream(
+      ServerContext* context,
+      grpc::ServerReaderWriter<plugin::ConnInfo, plugin::ConnInfo>* stream) override {
+    if (!tracker_.Add(context)) return Status::OK;
+    plugin::ConnInfo ignored;
+    while (stream->Read(&ignored)) {
+    }
+    tracker_.Remove(context);
+    return Status::OK;
+  }
+
+ private:
+  StreamTracker& tracker_;
+};
+
 void RunServer(uint16_t port) {
   // Loopback only; with port 0 gRPC picks a free port and reports it back.
   std::string server_address = absl::StrFormat("127.0.0.1:%d", port);
@@ -147,8 +232,12 @@ void RunServer(uint16_t port) {
   // triggers it, so it must run on another thread rather than in the handler.
   std::once_flag shutdown_once;
   std::thread shutdown_thread;
+  StreamTracker streams;
+  StdioServiceImpl stdio_service(streams);
+  BrokerServiceImpl broker_service(streams);
   ControllerServiceImpl controller_service([&] {
     std::call_once(shutdown_once, [&] {
+      streams.CancelAll();
       shutdown_thread = std::thread([&] {
         server->Shutdown(std::chrono::system_clock::now() + std::chrono::seconds(1));
       });
@@ -165,6 +254,8 @@ void RunServer(uint16_t port) {
   // Register the provider service through which Core communicates with us.
   builder.RegisterService(&provider_service);
   builder.RegisterService(&controller_service);
+  builder.RegisterService(&stdio_service);
+  builder.RegisterService(&broker_service);
   // Finally assemble the server.
   server = builder.BuildAndStart();
   if (!server || selected_port == 0) {

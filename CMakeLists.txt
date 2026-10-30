@@ -62,6 +62,34 @@ add_custom_command(
         "${ctrl_abs_path}"
       DEPENDS "${ctrl_abs_path}")
 
+# go-plugin stdio service (stream of the plugin's stdout/stderr to Core)
+set(stdio_srcs "${CMAKE_CURRENT_BINARY_DIR}/grpc_stdio.pb.cc" "${CMAKE_CURRENT_BINARY_DIR}/grpc_stdio.grpc.pb.cc")
+set(stdio_hdrs "${CMAKE_CURRENT_BINARY_DIR}/grpc_stdio.pb.h" "${CMAKE_CURRENT_BINARY_DIR}/grpc_stdio.grpc.pb.h")
+get_filename_component(stdio_abs_path "proto/grpc_stdio.proto" ABSOLUTE)
+add_custom_command(
+      OUTPUT ${stdio_srcs} ${stdio_hdrs}
+      COMMAND ${_PROTOBUF_PROTOC}
+      ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
+        --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+        -I "${proto_path}"
+        --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
+        "${stdio_abs_path}"
+      DEPENDS "${stdio_abs_path}")
+
+# go-plugin broker service (stream for negotiating extra connections)
+set(broker_srcs "${CMAKE_CURRENT_BINARY_DIR}/grpc_broker.pb.cc" "${CMAKE_CURRENT_BINARY_DIR}/grpc_broker.grpc.pb.cc")
+set(broker_hdrs "${CMAKE_CURRENT_BINARY_DIR}/grpc_broker.pb.h" "${CMAKE_CURRENT_BINARY_DIR}/grpc_broker.grpc.pb.h")
+get_filename_component(broker_abs_path "proto/grpc_broker.proto" ABSOLUTE)
+add_custom_command(
+      OUTPUT ${broker_srcs} ${broker_hdrs}
+      COMMAND ${_PROTOBUF_PROTOC}
+      ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
+        --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+        -I "${proto_path}"
+        --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
+        "${broker_abs_path}"
+      DEPENDS "${broker_abs_path}")
+
 # Include generated *.pb.h files
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 
@@ -69,6 +97,10 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 add_library(plugin_grpc_proto
   ${ctrl_srcs}
   ${ctrl_hdrs}
+  ${stdio_srcs}
+  ${stdio_hdrs}
+  ${broker_srcs}
+  ${broker_hdrs}
   ${grpc_srcs}
   ${grpc_hdrs}
   ${proto_srcs}
