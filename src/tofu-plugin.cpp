@@ -172,6 +172,12 @@ void RunServer(uint16_t port) {
     return;
   }
   std::cerr << "Server listening on 127.0.0.1:" << selected_port << std::endl;
+  // go-plugin's ping asks the standard gRPC health service about the service
+  // name "plugin". The default health service only knows names it was told
+  // about, so without this Core's ping gets NOT_FOUND.
+  if (auto* health = server->GetHealthCheckService()) {
+    health->SetServingStatus("plugin", true);
+  }
   // Handshake: only after the server is listening, since Core connects as soon
   // as it reads this line. The line must be the first thing written to stdout.
   std::cout << absl::StrFormat("1|5|tcp|127.0.0.1:%d|grpc|\n", selected_port)
