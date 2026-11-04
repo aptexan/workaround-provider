@@ -3,7 +3,7 @@
 The normal checks in `tools/` (`check-startup.sh`, `check-health.sh`, `check-streams.sh`, `check-tofu.sh`) are meant to go red when the provider is wrong. A check that can never go red is worse than none, because it gives false confidence. `negative-check.sh` proves that they can.
 
 ```sh
-tools/negative-tests/negative-check.sh        # takes about 4 minutes
+tools/negative-tests/negative-check.sh        # takes about 7 minutes
 ```
 
 ## What it does
@@ -28,6 +28,8 @@ Because of that last check, **do not edit or rebuild the project while it runs**
 
 ## The breaks
 
+Each row is one break. The script's cases are written as `broken_provider <what> <check> <file> <old text> <new text>`.
+
 | What is broken in the copy | Check that must go red |
 | --- | --- |
 | health name `plugin` not registered | `check-health.sh` |
@@ -37,24 +39,40 @@ Because of that last check, **do not edit or rebuild the project while it runs**
 | cookie check disabled | `check-startup.sh` |
 | protocol version always 5 | `check-startup.sh` |
 | port range ignored | `check-startup.sh` |
-| handshake line missing its last `\|` | `check-startup.sh` |
+| handshake line missing the `\|` before the certificate field | `check-startup.sh` |
 | a log line written to stdout | `check-startup.sh` |
+| client certificate not requested | `check-tls.sh` |
+| client certificate requested but not verified | `check-tls.sh` |
+| plaintext although Core sent a certificate | `check-tls.sh` and `TLS=1 check-tofu.sh` |
+| handshake line without the certificate | `check-tls.sh` and `TLS=1 check-tofu.sh` |
+| a client certificate that is not PEM is accepted | `check-tls.sh` |
+| certificate: P-256 key instead of P-521 | `check-tls.sh` |
+| certificate: CA flag off | `check-tls.sh` |
+| certificate: wrong name | `check-tls.sh` |
+| certificate: no client-authentication usage | `check-tls.sh` |
+| certificate: no Certificate Sign usage | `check-tls.sh` |
+| certificate: `=` padding left in field 6 | `check-tls.sh` |
 
-The `check-tofu.sh` cases are skipped (the script says `SKIP`) if `tofu` or `TOFU_DIR/tofu.tf` is missing. For those cases the script writes a private OpenTofu config pointing at the **copy**, via `TF_CLI_CONFIG_FILE`, so your `~/.tofurc` is not used and not changed. `check-tofu.sh` still deletes `terraform.tfstate*` in `TOFU_DIR`, as it always does.
+Before any break, the unbroken copy must be green on every check in every mode (`check-startup`, `check-health` and `check-streams` in plaintext and in TLS, `check-tls`, `check-tofu` in both modes).
+
+The `check-tofu.sh` cases are skipped (the script says `SKIP`) if `tofu` or `TOFU_DIR/tofu.tf` is missing. For those cases the script writes a private OpenTofu config pointing at the **copy**, via `TF_CLI_CONFIG_FILE`, so your `~/.tofurc` is not used and not changed. `check-tofu.sh` still deletes `terraform.tfstate*`, but in a private copy of your `*.tf` files, never in your real `TOFU_DIR`.
 
 ## Adding a break
 
-Add one line at the end of `negative-check.sh`:
+Add one line before the final fingerprint check in `negative-check.sh`:
 
 ```sh
-broken_provider "what is broken" check-something.sh 'exact line in src/tofu-plugin.cpp' 'what to replace it with'
+broken_provider "what is broken" [VAR=value] check-something.sh tofu-plugin.cpp 'exact text in that file' 'what to replace it with'
 ```
+
+The source file is `tofu-plugin.cpp` or `server-cert.cpp`. The text must occur **exactly once** in it (if it matches twice, for example because a comment quotes it, the script stops with `break applied to the source` and you make the text more specific).
 
 Keep the replaced text on **one line**, and make the replacement still compile. Then run the script and see the new line go `PASS`.
 
 ## Options
 
-- `CMAKE_PREFIX_PATH=...` if your gRPC is not in `~/.local/grpc` (the default used in `BUILDING.md`).
+- The copy is built against the same gRPC as your real build: the script reads `CMAKE_PREFIX_PATH` from `build/CMakeCache.txt` (read-only). Set `CMAKE_PREFIX_PATH=...` to override. It must be a gRPC built against OpenSSL (see `BUILDING.md`).
+- It needs the `openssl` command, because `check-tls.sh` does.
 - `PROVIDER` is set by the script itself; don't set it.
 - `TOFU_DIR=...` as for `check-tofu.sh`.
 

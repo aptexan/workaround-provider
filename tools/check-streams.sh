@@ -3,6 +3,7 @@
 # keep answering other calls meanwhile, and cancel them when asked to shut down, so it exits quickly (Core allows ~2 s
 # before it kills the process). No OpenTofu needed.
 . "$(dirname "$0")/lib.sh"
+echo "== mode: $MODE"
 start_provider
 NO_FIELDS='\x00\x00\x00\x00\x00'
 

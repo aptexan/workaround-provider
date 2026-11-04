@@ -5,12 +5,13 @@
     "cmake.generator": "Unix Makefiles",
 
     // Same file works on WSL and on native Debian/Linux: nothing here is
-    // machine- or user-specific. gRPC/protobuf/abseil are expected in ~/.local/grpc.
+    // machine- or user-specific. gRPC/protobuf/abseil are expected in ~/.local/grpc-openssl
+    // (gRPC built against OpenSSL; the name is a reminder. See BUILDING.md).
     // /mnt/c only exists under WSL (Windows anaconda copies leak in through PATH);
     // on native Linux the path does not exist, so ignoring it is harmless.
     "cmake.configureSettings": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "CMAKE_PREFIX_PATH": "${userHome}/.local/grpc",
+        "CMAKE_PREFIX_PATH": "${userHome}/.local/grpc-openssl",
         "CMAKE_IGNORE_PREFIX_PATH": "/mnt/c"
     },
 

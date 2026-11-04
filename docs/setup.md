@@ -52,23 +52,25 @@ Check: `cmake --version`.
 
 ## 4. gRPC, Protobuf, Abseil
 
-Target prefix: `~/.local/grpc` (the project's VSCode settings expect this path).
+Target prefix: `~/.local/grpc-openssl` (the project's VSCode settings expect this path; the name is a reminder that gRPC must use OpenSSL, see below).
 
 **Linux** (prebuilt binaries from conda-forge, via micromamba):
 ```sh
 curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C ~/.local bin/micromamba
-~/.local/bin/micromamba create -y -p ~/.local/grpc -c conda-forge grpc-cpp libprotobuf libabseil
+~/.local/bin/micromamba create -y -p ~/.local/grpc-openssl -c conda-forge grpc-cpp libprotobuf libabseil
 ```
 
 **macOS** (prebuilt bottles from Homebrew):
 ```sh
 brew install grpc protobuf abseil
-mkdir -p ~/.local && ln -sfn "$(brew --prefix)" ~/.local/grpc
+mkdir -p ~/.local && ln -sfn "$(brew --prefix)" ~/.local/grpc-openssl
 ```
 
-Check: `ls ~/.local/grpc/bin/protoc ~/.local/grpc/bin/grpc_cpp_plugin`.
+Check: `ls ~/.local/grpc-openssl/bin/protoc ~/.local/grpc-openssl/bin/grpc_cpp_plugin`.
 
-**Optional: build from source** (instead of the above). Follow the install section of https://grpc.io/docs/languages/cpp/quickstart/ and set `MY_INSTALL_DIR=$HOME/.local/grpc`. Use the same compiler for the libraries and the provider.
+**Optional: build from source** (instead of the above). Follow the install section of https://grpc.io/docs/languages/cpp/quickstart/ and set `MY_INSTALL_DIR=$HOME/.local/grpc-openssl`. Use the same compiler for the libraries and the provider.
+
+**gRPC must use OpenSSL, not its bundled BoringSSL.** OpenTofu's mutual TLS needs it (its client certificate has a P-521 key, which a BoringSSL-based gRPC server cannot accept). If you build from source, `apt install libssl-dev` first and add `-DgRPC_SSL_PROVIDER=package` to the quick start's `cmake` command (the default, `module`, bundles BoringSSL). A BoringSSL-based install at `~/.local/grpc` (the quick start's default prefix) is not usable here; leave it alone and use `~/.local/grpc-openssl` as above. The Homebrew and conda-forge packages above are normally built against OpenSSL, but this has not been checked: if the provider's build stops with `gRPC must be built against OpenSSL 3`, build gRPC yourself. Full reasons, dependency list and commands are in `BUILDING.md`.
 
 ## 5. Get the project
 
@@ -84,12 +86,12 @@ From the `workaround-provider` folder:
 ```sh
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_PREFIX_PATH="$HOME/.local/grpc" \
+  -DCMAKE_PREFIX_PATH="$HOME/.local/grpc-openssl" \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build --parallel 4
 ```
 Output: `build/terraform-provider-workaround`.
-Check: `./build/terraform-provider-workaround --port=0` prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|`. Stop with `Ctrl+C`.
+Check: `./build/terraform-provider-workaround --debug --port=0` prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|` (`--debug` is needed because the provider refuses to start by hand without OpenTofu's magic cookie). Stop with `Ctrl+C`.
 Protobuf/gRPC sources are generated into `build/` automatically.
 
 ## 7. VSCode extensions

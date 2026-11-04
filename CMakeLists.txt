@@ -113,7 +113,7 @@ target_link_libraries(plugin_grpc_proto
 
   ## Tartget name (executable file) is same as the project name (tofu-plugin-cpp)
   set (plugin_exe_name "terraform-provider-workaround")
-  add_executable(${plugin_exe_name} "src/tofu-plugin.cpp")
+  add_executable(${plugin_exe_name} "src/tofu-plugin.cpp" "src/server-cert.cpp")
   target_link_libraries(${plugin_exe_name}
     plugin_grpc_proto
     absl::check

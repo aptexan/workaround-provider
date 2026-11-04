@@ -47,6 +47,7 @@
 #include "grpc_broker.grpc.pb.h"
 #include "grpc_controller.grpc.pb.h"
 #include "grpc_stdio.grpc.pb.h"
+#include "server-cert.h"
 #include "tfplugin5.grpc.pb.h"
 
 using grpc::Server;
@@ -250,6 +251,7 @@ struct StartupConfig {
   int protocol_version = 0;  // the major version to advertise
   uint16_t min_port = 0;     // both 0: no range was requested
   uint16_t max_port = 0;
+  std::string client_cert_pem;  // Core's certificate; empty means plaintext (no mutual TLS)
 };
 
 // Reads an optional port variable. Returns false (after a message) if it is set
@@ -311,7 +313,18 @@ std::optional<StartupConfig> CheckStartup(bool debug) {
     }
   }
 
-  // 3. Port range. Core may restrict which TCP ports a plugin may listen on.
+  // 3. Mutual TLS. Core hands us its own certificate (public part only) and expects us to answer only clients that
+  // present it. Without one Core runs in plaintext mode (TF_DISABLE_PLUGIN_TLS), and so do we.
+  const char* client_cert = std::getenv("PLUGIN_CLIENT_CERT");
+  if (client_cert != nullptr && *client_cert != '\0') {
+    config.client_cert_pem = client_cert;
+    if (!IsPemCertificate(config.client_cert_pem)) {
+      std::cerr << "PLUGIN_CLIENT_CERT is set but does not hold a PEM certificate" << std::endl;
+      return std::nullopt;
+    }
+  }
+
+  // 4. Port range. Core may restrict which TCP ports a plugin may listen on.
   bool has_min = false, has_max = false;
   if (!ReadPortVariable("PLUGIN_MIN_PORT", &config.min_port, &has_min) ||
       !ReadPortVariable("PLUGIN_MAX_PORT", &config.max_port, &has_max)) {
@@ -352,14 +365,33 @@ int RunServer(uint16_t port, const StartupConfig& config) {
 
   grpc::EnableDefaultHealthCheckService(true);
   grpc::reflection::InitProtoReflectionServerBuilderPlugin();
-  // Loopback only, no authentication until mutual TLS is implemented (Core must
-  // run with TF_DISABLE_PLUGIN_TLS=1). A server cannot be re-bound once started,
-  // so each attempt builds a fresh one.
+  // Transport security, chosen like go-plugin does: by whether Core sent its certificate.
+  //  - PLUGIN_CLIENT_CERT set: mutual TLS. We make a fresh certificate and key for this process, present it, and
+  //    answer only clients that present Core's certificate (required AND verified against it).
+  //  - not set (Core runs with TF_DISABLE_PLUGIN_TLS, or --debug by hand): plaintext.
+  std::shared_ptr<grpc::ServerCredentials> credentials;
+  std::string handshake_certificate;  // field 6 of the handshake line; empty for plaintext
+  if (config.client_cert_pem.empty()) {
+    credentials = grpc::InsecureServerCredentials();
+  } else {
+    std::string error;
+    std::optional<ServerCertificate> certificate = GenerateServerCertificate(&error);
+    if (!certificate) {
+      std::cerr << error << std::endl;
+      return 1;
+    }
+    grpc::SslServerCredentialsOptions options(GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY);
+    options.pem_root_certs = config.client_cert_pem;  // the only certificate a client may have
+    options.pem_key_cert_pairs.push_back({certificate->key_pem, certificate->cert_pem});
+    credentials = grpc::SslServerCredentials(options);
+    handshake_certificate = certificate->handshake_field;
+  }
+  // Loopback only. A server cannot be re-bound once started, so each attempt builds a fresh one.
   auto try_start = [&](int candidate) {
     std::string address = absl::StrFormat("127.0.0.1:%d", candidate);
     selected_port = 0;
     ServerBuilder builder;
-    builder.AddListeningPort(address, grpc::InsecureServerCredentials(), &selected_port);
+    builder.AddListeningPort(address, credentials, &selected_port);
     // Register the provider service through which Core communicates with us.
     builder.RegisterService(&provider_service);
     builder.RegisterService(&controller_service);
@@ -392,8 +424,8 @@ int RunServer(uint16_t port, const StartupConfig& config) {
     }
     return 1;
   }
-  std::cerr << "Server listening on 127.0.0.1:" << selected_port << " (pid " << getpid()
-            << ")" << std::endl;
+  std::cerr << "Server listening on 127.0.0.1:" << selected_port << " (pid " << getpid() << ", "
+            << (handshake_certificate.empty() ? "plaintext" : "mutual TLS") << ")" << std::endl;
   // go-plugin's ping asks the standard gRPC health service about the service
   // name "plugin". The default health service only knows names it was told
   // about, so without this Core's ping gets NOT_FOUND.
@@ -402,8 +434,8 @@ int RunServer(uint16_t port, const StartupConfig& config) {
   }
   // Handshake: only after the server is listening, since Core connects as soon
   // as it reads this line. The line must be the first thing written to stdout.
-  std::cout << absl::StrFormat("1|%d|tcp|127.0.0.1:%d|grpc|\n", config.protocol_version,
-                          selected_port)
+  std::cout << absl::StrFormat("1|%d|tcp|127.0.0.1:%d|grpc|%s\n", config.protocol_version,
+                               selected_port, handshake_certificate)
             << std::flush;
   // Wait for the server to shutdown. Note that some other thread must be
   // responsible for shutting down the server for this call to ever return.

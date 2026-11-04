@@ -12,9 +12,9 @@ The scripts are deliberately plain. Every check is **one line** that says what i
 tools/run-all.sh
 ```
 
-That runs the four checks below and ends with `ALL CHECKS PASSED` (or `SOME CHECKS FAILED`, with exit status 1). `check-tofu.sh` needs OpenTofu set up first (section 4); without it `run-all.sh` says `SKIPPED` for that one and runs the rest.
+That runs the checks below, **once in plaintext and once with mutual TLS** where that makes sense (108 checks in all), and ends with `ALL CHECKS PASSED` (or `SOME CHECKS FAILED`, with exit status 1). `check-tofu.sh` needs OpenTofu set up first (section 4); without it `run-all.sh` says `SKIPPED` for that one and runs the rest.
 
-You need: `bash`, `curl` with HTTP/2 support (`curl --version` should list `HTTP2`), `python3` (only to occupy a port in `check-startup.sh`), and, for `check-tofu.sh`, `tofu` on your `PATH`.
+You need: `bash`, `curl` with HTTP/2 support (`curl --version` should list `HTTP2`), `openssl` (the command line tool, to make test certificates), `python3` (only to occupy a port in `check-startup.sh`), and, for `check-tofu.sh`, `tofu` on your `PATH`. The provider itself must have been built against gRPC with **OpenSSL** (see `BUILDING.md`); otherwise it does not compile.
 
 By default the scripts look for the provider at `$HOME/tpc/build/terraform-provider-workaround`. If yours is elsewhere: `PROVIDER=/path/to/terraform-provider-workaround tools/run-all.sh`.
 
@@ -49,9 +49,15 @@ Providers are normally written in Go with a library called **go-plugin**. Ours i
 
 Besides the provider's own service, a go-plugin server also offers a **health** service (Core's "are you alive?" ping), a **stdio** stream and a **broker** stream. Core opens the last two when it connects, and they stay open until shutdown.
 
-### Plaintext mode
+### Mutual TLS and plaintext
 
-Normally Core encrypts the connection with mutual TLS. That is **not implemented yet**, so everything here runs with `TF_DISABLE_PLUGIN_TLS=1`, which tells Core to skip encryption. A pass therefore says nothing about the encrypted path.
+Normally Core encrypts its connection to the provider, and **both sides prove who they are with a certificate** (that is the "mutual"). The exchange, from `PLUGIN_CLIENT_CERT` to the certificate in the handshake line, is drawn in `mtls-exchange.svg` (next to this file) and summarised here:
+
+1. Core makes a certificate and passes it to the provider in `PLUGIN_CLIENT_CERT`.
+2. The provider makes its own certificate and private key, and prints the certificate (base64 of its DER bytes, no `=` padding) as the last field of the handshake line.
+3. The provider answers only clients that present **Core's** certificate. Core trusts only **the provider's** certificate from the handshake line, and expects the name `localhost`.
+
+If `PLUGIN_CLIENT_CERT` is not set, which is what Core does when it is told `TF_DISABLE_PLUGIN_TLS=1`, the provider serves plaintext and the last field of the handshake line is empty. The scripts test both. `TLS=1` makes `check-health.sh`, `check-streams.sh` and `check-tofu.sh` run in TLS mode (they print `== mode: mutual TLS`); `check-tls.sh` is always TLS. `run-all.sh` runs everything both ways.
 
 ### Running the binary by hand
 
@@ -65,11 +71,12 @@ There is no gRPC client library here. A gRPC call is an HTTP/2 POST whose body i
 
 | Script | Needs OpenTofu? | Checks | What it proves | Takes |
 | --- | --- | --- | --- | --- |
-| `check-startup.sh` | no | 19 | the provider validates what Core tells it, and refuses bad input without printing a handshake | about 10 s |
+| `check-startup.sh` | no | 19 | the provider validates what Core tells it, and refuses bad input without printing a handshake | about 13 s |
 | `check-health.sh` | no | 7 | the health service answers for `plugin`; other calls behave | under 1 s |
-| `check-streams.sh` | no | 6 | the stdio and broker streams stay open, don't block other calls, and are cancelled on shutdown | about 1 s |
-| `check-tofu.sh` | yes | 16 | the real Core runs plan, apply and destroy against the provider with no errors or warnings | under 1 s |
-| `run-all.sh` | | | runs the four above | about 12 s |
+| `check-streams.sh` | no | 6 | the stdio and broker streams stay open, don't block other calls, and are cancelled on shutdown | about 1.5 s |
+| `check-tls.sh` | no | 25 | mutual TLS: only Core's certificate is accepted, and the provider's certificate has go-plugin's properties | under 1 s |
+| `check-tofu.sh` | yes | 19 | the real Core runs plan, apply and destroy against the provider with no errors or warnings | under 1 s |
+| `run-all.sh` | | 108 | runs all of the above; health, streams and tofu twice (`TLS=0`, `TLS=1`) | about 14 s |
 
 `lib.sh` is a small helper the others load; it defines `expect` (the one-line check) and a few things for talking to a running provider. It is not run directly.
 
@@ -99,9 +106,23 @@ The stdio and broker calls are **streams**: one call that stays open and carries
 
 The 0.5 s limit is deliberate. Core allows about 2 s, but if the provider did *not* cancel the streams, the server would wait about 1 s for them, which would still beat 2 s and hide the bug. 0.5 s does not.
 
+### `check-tls.sh`: who may talk to the provider
+
+Always in TLS mode. It plays Core with `curl` and `openssl`, using a client certificate made like Core's (P-521, self-signed, CA, name `localhost`), and checks:
+
+| Group | Checks |
+| --- | --- |
+| Who may talk to the provider | Core's certificate works; **no** client certificate is refused; **someone else's** client certificate is refused; plaintext to the TLS port is refused |
+| What the client (Core) checks | a different trusted certificate than the one in the handshake line is refused (so the certificate presented really is the one in the line); the name must be `localhost` (`127.0.0.1` is refused) |
+| TLS versions | TLS 1.2 works, TLS 1.1 is refused (go-plugin's minimum is 1.2) |
+| The certificate, against go-plugin's | ECDSA P-521 key; signed with SHA-512; name `localhost`; alternative name `DNS:localhost`; CA flag; key usages Certificate Sign, Digital Signature, Key Encipherment, Key Agreement; extended usages server and client authentication; valid now and for at least 25 more years |
+| Fresh key and bad input | field 6 never has `=` padding (looked at **10** certificates, because base64 pads only when the length is not a multiple of 3 and the length varies from key to key, so one certificate can look right by luck); every start makes a new certificate; a client certificate that is not PEM is refused (exit 1, no handshake) with a message naming `PLUGIN_CLIENT_CERT` |
+
+"Refused" for a connection means curl got no reply at all. A client certificate that is wrong is refused by closing the connection, not with a gRPC error. The Go client behaves the same way, which is how Core saw the failure described in `BUILDING.md` before gRPC was built against OpenSSL.
+
 ### `check-tofu.sh`: the real thing
 
-Runs `tofu plan`, `tofu apply -auto-approve` and `tofu destroy -auto-approve` with `TF_LOG=DEBUG`, and for each checks: exit status 0, no `[ERROR]` lines, no `[WARN]` lines, no `Error:` messages, and that every provider process Core started (`starting plugin`) also logged `plugin process exited`. Then that no provider process is left running. This is the most important check because the other side of the conversation is the genuine OpenTofu. A provider that Core had to kill shows up as `[WARN]`/`[ERROR]` lines.
+Runs `tofu plan`, `tofu apply -auto-approve` and `tofu destroy -auto-approve` with `TF_LOG=DEBUG`, and for each checks: exit status 0, no `[ERROR]` lines, no `[WARN]` lines, no `Error:` messages, and that every provider process Core started (`starting plugin`) also logged `plugin process exited`. Then that no provider process is left running. It also checks that Core really used mutual TLS in TLS mode (Core logs `configuring client automatic mTLS` only then) and did not in plaintext mode, so the mode asked for is the mode that ran. With `TLS=1` it leaves encryption on, as in normal use; without it, it sets `TF_DISABLE_PLUGIN_TLS=1`. This is the most important check because the other side of the conversation is the genuine OpenTofu. A provider that Core had to kill shows up as `[WARN]`/`[ERROR]` lines.
 
 It **deletes `terraform.tfstate*` in `TOFU_DIR`** before and after, so never point it at a directory with real state. Logs go to `$TMPDIR/tofu-logs/` (`/tmp/tofu-logs/`).
 
@@ -148,19 +169,21 @@ To see what OpenTofu does by hand: `cd <dir>; TF_DISABLE_PLUGIN_TLS=1 TF_LOG=DEB
 A check that cannot fail is worthless, so each check is tried against a provider that is **deliberately broken**, one feature at a time. Each break must turn its own check red and nothing else. This is automated:
 
 ```sh
-tools/negative-tests/negative-check.sh        # about 4 minutes; not part of run-all.sh
+tools/negative-tests/negative-check.sh        # about 7 minutes; not part of run-all.sh
 ```
 
-It works on a temporary copy of the project, and its last check proves that your source and `build/` are exactly as they were (content, size and modification times). See `tools/negative-tests/README.md` for the list of breaks, how to add one, and why it is built the way it is. On 2026-10-30 every break went red (`passed 25, failed 0`), and the unmodified provider then passed every normal script 44 times in a row (15 each for health and streams, 6 for startup, 8 for tofu) with no flaky result and no process left behind.
+It works on a temporary copy of the project, and its last check proves that your source and `build/` are exactly as they were (content, size and modification times). See `tools/negative-tests/README.md` for the list of breaks, how to add one, and why it is built the way it is. There are 23 breaks: the provider's startup rules, health, streams and shutdown, the mutual-TLS rules (client certificate not requested or not verified, plaintext despite a certificate, no certificate in the handshake line, a non-PEM client certificate accepted) and seven properties of the provider's certificate. Every break turned its own check red: `passed 55, failed 0` on 2026-11-04. The unmodified provider also passed every normal script many times in a row with no flaky result.
 
-Writing the tests caught two mistakes in the tests themselves. A "port taken" check that used a second copy of the provider as the blocker passed by luck, because gRPC lets two servers share a port. And "the broker stream ended" could not be observed from `curl` (it keeps reading its input after the server cancels), so that check was replaced by the 0.5 s exit time. The negative-test script itself was checked the same way: fed a break that changes nothing and a break whose text does not exist, it reports `FAIL` for both.
+Writing the tests caught mistakes in the tests themselves. One more, from the TLS checks: a check on random output (the `=` padding in the certificate) passed a broken provider on one run in three, because one sample can be right by luck; it now looks at ten, and a later negative run caught the break. If a check depends on something random, look at many samples.
+
+Earlier mistakes: A "port taken" check that used a second copy of the provider as the blocker passed by luck, because gRPC lets two servers share a port. And "the broker stream ended" could not be observed from `curl` (it keeps reading its input after the server cancels), so that check was replaced by the 0.5 s exit time. The negative-test script itself was checked the same way: fed a break that changes nothing and a break whose text does not exist, it reports `FAIL` for both.
 
 If you change a check script, run `negative-check.sh` again.
 
 ## 6. What these tests do not cover
 
 - **No comparison with a real Go provider.** The expected behaviour comes from reading the go-plugin and OpenTofu sources. The `curl` scripts act as Core according to that reading, so they test our implementation of it, not Go's. Only `check-tofu.sh` uses the genuine Core. (A Go reference plugin to compare against is a planned, deferred, stronger check.)
-- **Encryption (mutual TLS).** Everything runs in plaintext.
+- **Encryption details.** Mutual TLS is tested against the real Core (`TLS=1 check-tofu.sh`) and against `curl`/`openssl` playing Core (`check-tls.sh`). Not tested: which cipher suites are chosen, certificate expiry handling, and Unix-socket TLS.
 - **Provider protocol 6, Unix sockets, and broker multiplexing.** Not implemented, so not tested.
 - **Real data.** The provider has one resource with no attributes, so the checks cover the transport and lifecycle, not resource handling.
 - **Many streams at once.** Only two open streams were tried.
@@ -170,6 +193,8 @@ If you change a check script, run `negative-check.sh` again.
 
 - **The provider exits at once with "This binary is a plugin…".** It was started without the cookie. Use `--debug`, or start it through OpenTofu.
 - **`Provider not found`.** Build it, or set `PROVIDER=`.
+- **OpenTofu says `error reading server preface: EOF` / `Plugin did not respond` in TLS mode, and the provider logged `mutual TLS`.** The provider was built against a gRPC that uses BoringSSL, which cannot accept Core's P-521 client certificate. A current build refuses to compile that way; rebuild against OpenSSL (`BUILDING.md`).
+- **`TLS=1` checks fail at once with "needs the openssl command".** Install the `openssl` command line tool.
 - **Counting provider processes.** `pgrep -f name` also matches its own command line. The scripts use an anchored pattern, `pgrep -f '^/full/path/to/terraform-provider-workaround'`.
 - **`curl` checks fail strangely.** Check `curl --version` lists `HTTP2`.
 - **Core says the provider "failed to exit gracefully".** Core had to kill it because it did not exit in time; `check-streams.sh` shows whether a stream is holding it up.

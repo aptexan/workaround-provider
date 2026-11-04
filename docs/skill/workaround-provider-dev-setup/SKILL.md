@@ -51,33 +51,34 @@ Check: `cmake --version`; parse the version and require ≥ 3.22.
 - Linux, if missing/too old: download `https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-<x86_64|aarch64>.tar.gz` to a temp dir, extract into `~/.local/cmake` with `--strip-components=1`, symlink `~/.local/cmake/bin/*` into `~/.local/bin/`.
 - macOS, if missing/too old: `brew install cmake`.
 
-## Step 4: gRPC, Protobuf, Abseil in `~/.local/grpc`
+## Step 4: gRPC, Protobuf, Abseil in `~/.local/grpc-openssl`
 
-Check: `~/.local/grpc/bin/protoc`, `~/.local/grpc/bin/grpc_cpp_plugin` exist, and CMake configs exist: `find ~/.local/grpc -name 'gRPCConfig.cmake' -o -name 'protobuf-config.cmake' -o -name 'abslConfig.cmake'` finds all three. If everything is present, skip.
+Check: `~/.local/grpc-openssl/bin/protoc`, `~/.local/grpc-openssl/bin/grpc_cpp_plugin` exist, and CMake configs exist: `find ~/.local/grpc-openssl -name 'gRPCConfig.cmake' -o -name 'protobuf-config.cmake' -o -name 'abslConfig.cmake'` finds all three. If everything is present, skip.
 
 - Linux, if missing:
   ```sh
   curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C ~/.local bin/micromamba    # linux-aarch64 on arm64; skip if micromamba already exists
-  ~/.local/bin/micromamba create -y -p ~/.local/grpc -c conda-forge grpc-cpp libprotobuf libabseil
+  ~/.local/bin/micromamba create -y -p ~/.local/grpc-openssl -c conda-forge grpc-cpp libprotobuf libabseil
   ```
-  If `~/.local/grpc` exists but is incomplete, ask the user before removing or replacing it.
+  If `~/.local/grpc-openssl` exists but is incomplete, ask the user before removing or replacing it.
 - macOS, if missing:
   ```sh
   brew install grpc protobuf abseil
-  mkdir -p ~/.local && ln -sfn "$(brew --prefix)" ~/.local/grpc
+  mkdir -p ~/.local && ln -sfn "$(brew --prefix)" ~/.local/grpc-openssl
   ```
-  If `~/.local/grpc` already exists and is not a symlink, ask the user before changing it.
-- Optional (only on request): build from source following https://grpc.io/docs/languages/cpp/quickstart/ with `MY_INSTALL_DIR=$HOME/.local/grpc`, using the same compiler as the provider.
+  If `~/.local/grpc-openssl` already exists and is not a symlink, ask the user before changing it.
+- Optional (only on request): build from source following https://grpc.io/docs/languages/cpp/quickstart/ with `MY_INSTALL_DIR=$HOME/.local/grpc-openssl`, using the same compiler as the provider.
+- **gRPC must use OpenSSL, not its bundled BoringSSL** (OpenTofu's mutual TLS needs it). For a source build: install `libssl-dev` and add `-DgRPC_SSL_PROVIDER=package` to the quick start's cmake command; the prefix is `~/.local/grpc-openssl` on purpose (a BoringSSL-based `~/.local/grpc` is not usable here; leave it alone). The conda-forge and Homebrew packages are normally OpenSSL-based but unverified: if the build later stops with `gRPC must be built against OpenSSL 3`, tell the user and point to `BUILDING.md`.
 
 ## Step 5: Command-line build
 
-Check: `build/terraform-provider-workaround` exists and `build/CMakeCache.txt` has `CMAKE_PREFIX_PATH` containing `.local/grpc`. If the executable exists and is newer than every file in `src/` and `proto/`, skip. If the cache was made with a different generator, compiler, or prefix, configure into a fresh `build/` (ask before deleting an existing one).
+Check: `build/terraform-provider-workaround` exists and `build/CMakeCache.txt` has `CMAKE_PREFIX_PATH` containing `.local/grpc-openssl`. If the executable exists and is newer than every file in `src/` and `proto/`, skip. If the cache was made with a different generator, compiler, or prefix, configure into a fresh `build/` (ask before deleting an existing one).
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$HOME/.local/grpc" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$HOME/.local/grpc-openssl" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build --parallel 4
 ```
-Under WSL add `-DCMAKE_IGNORE_PREFIX_PATH=/mnt/c`. Check: `./build/terraform-provider-workaround --port=0` prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|`; run it with a short timeout and kill it. If the build fails, show the first error and stop.
+Under WSL add `-DCMAKE_IGNORE_PREFIX_PATH=/mnt/c`. Check: `./build/terraform-provider-workaround --debug --port=0` (`--debug`: the provider refuses to start by hand without OpenTofu's magic cookie) prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|`; run it with a short timeout and kill it. If the build fails, show the first error and stop.
 
 ## Step 6: VSCode extensions
 
@@ -99,7 +100,7 @@ Check `.vscode/settings.json` for each key; add only missing/different ones, pre
 "C_Cpp.intelliSenseEngine": "disabled",
 "C_Cpp.autocomplete": "disabled",
 "C_Cpp.errorSquiggles": "disabled",
-"cmake.configureSettings": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON", "CMAKE_PREFIX_PATH": "${userHome}/.local/grpc" },
+"cmake.configureSettings": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON", "CMAKE_PREFIX_PATH": "${userHome}/.local/grpc-openssl" },
 "clangd.arguments": ["--compile-commands-dir=${workspaceFolder}/build", "--background-index", "--header-insertion=iwyu"]
 ```
 
@@ -108,7 +109,7 @@ Also ensure `.vscode/extensions.json` recommends `llvm-vs-code-extensions.vscode
 ## Step 8: No red squiggles
 
 1. `build/compile_commands.json` must exist (step 5) and generated headers (`build/tfplugin5.pb.h`, `build/tfplugin5.grpc.pb.h`, `build/grpc_controller.pb.h`) must exist. If not, rerun step 5.
-2. Run `clangd --check=src/tofu-plugin.cpp --compile-commands-dir=build` (use `~/.local/grpc/bin/clangd` or the VSCode-managed one if `clangd` is not on PATH; the extension downloads its own into the VSCode global storage). Any `error:` diagnostics (unresolved include, unknown symbol) → fix include paths/compile database and recheck. Repeat for a generated file, e.g. `build/tfplugin5.pb.cc`.
+2. Run `clangd --check=src/tofu-plugin.cpp --compile-commands-dir=build` (use `~/.local/grpc-openssl/bin/clangd` or the VSCode-managed one if `clangd` is not on PATH; the extension downloads its own into the VSCode global storage). Any `error:` diagnostics (unresolved include, unknown symbol) → fix include paths/compile database and recheck. Repeat for a generated file, e.g. `build/tfplugin5.pb.cc`.
 3. Tell the user to run **clangd: Restart language server** in VSCode if it is already open.
 4. If problems persist, follow the `vscode-clangd-setup` skill, and `vscode_enable_cpp23` if only C++23 syntax is flagged.
 

@@ -4,18 +4,23 @@
 #   Needs: the provider built, and ~/.tofurc with a dev_overrides entry for it (see TESTING.md).
 #   TOFU_DIR = the directory holding your tofu.tf (default ~/wpe). Its terraform.tfstate* files are DELETED before and
 #   after, so do not point it at a directory with real state. Logs: $TMPDIR/tofu-logs/ (or /tmp/tofu-logs/).
-#   Plaintext only: TF_DISABLE_PLUGIN_TLS=1 until mutual TLS is implemented.
+#   Plaintext by default (TF_DISABLE_PLUGIN_TLS=1). TLS=1 leaves encryption on, which is how Core normally runs.
 . "$(dirname "$0")/lib.sh"
 TOFU_DIR=${TOFU_DIR:-$HOME/wpe}
 LOGS=${TMPDIR:-/tmp}/tofu-logs; mkdir -p "$LOGS"
 cd "$TOFU_DIR" || exit 2
-export TF_DISABLE_PLUGIN_TLS=1 TF_LOG=DEBUG
+export TF_LOG=DEBUG
+# TLS=1: leave encryption on, as in normal use. Otherwise tell Core to skip it (plaintext).
+if [ "$TLS" = 1 ]; then unset TF_DISABLE_PLUGIN_TLS; else export TF_DISABLE_PLUGIN_TLS=1; fi
+echo "== mode: $MODE"
 rm -f terraform.tfstate*
 
 for command in "plan" "apply -auto-approve" "destroy -auto-approve"; do
   name=${command%% *}; log=$LOGS/$name.log
   tofu $command -no-color >"$log" 2>&1; status=$?
   expect "$name: tofu succeeds (exit status)"       "$status" 0
+  # Core logs this line only when it uses mutual TLS, so this proves the mode we asked for is the mode that ran.
+  expect "$name: Core used mutual TLS (only in TLS mode)" "$(grep -q 'configuring client automatic mTLS' "$log" && echo yes || echo no)" "$([ "$TLS" = 1 ] && echo yes || echo no)"
   expect "$name: no [ERROR] lines in the log"       "$(grep -c '\[ERROR\]' "$log")" 0
   expect "$name: no [WARN] lines in the log"        "$(grep -c '\[WARN\]' "$log")" 0
   expect "$name: no 'Error:' messages"              "$(grep -c '^Error:' "$log")" 0

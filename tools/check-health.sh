@@ -2,6 +2,7 @@
 # Is the provider's gRPC health service answering? go-plugin's "are you alive?" ping asks it about the name "plugin".
 # Also: an ordinary call works, and a call to a method that does not exist is refused cleanly. No OpenTofu needed.
 . "$(dirname "$0")/lib.sh"
+echo "== mode: $MODE"
 start_provider
 
 # Requests, written out byte by byte:  00 | 4-byte length | protobuf message.
