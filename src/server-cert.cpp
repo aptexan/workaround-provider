@@ -17,9 +17,9 @@
 // OpenTofu's go-plugin gives every provider a client certificate with a P-521 key. A TLS server can only accept such a
 // certificate if it offers the "ECDSA with SHA-512" signature type, which gRPC's bundled BoringSSL does not. The
 // provider would build and run, and then Core would be refused with "error reading server preface: EOF".
-// So refuse to build against anything but OpenSSL 3. See BUILDING.md ("gRPC must be built against OpenSSL").
+// So refuse to build against anything but OpenSSL 3. See BUILDING.md; the gRPC build is in docs/setup.md, section 4.1.
 #if defined(OPENSSL_IS_BORINGSSL) || OPENSSL_VERSION_NUMBER < 0x30000000L
-#error "gRPC must be built against OpenSSL 3 (gRPC_SSL_PROVIDER=package): its bundled BoringSSL cannot accept the P-521 client certificates OpenTofu uses for mutual TLS. See BUILDING.md."
+#error "gRPC must be built against OpenSSL 3 (gRPC_SSL_PROVIDER=package): its bundled BoringSSL cannot accept the P-521 client certificates OpenTofu uses for mutual TLS. See BUILDING.md and docs/setup.md, section 4.1."
 #endif
 
 namespace {

@@ -9,9 +9,9 @@ Do the setup that `docs/setup.md` describes manually. Run every step **check fir
 
 ## Rules
 
-- The repo is already cloned. Never clone. Work in the current directory.
+- The repo is already cloned. Never clone it. Work in the current directory. (Step 4's optional source build clones gRPC into a temp directory, not here.)
 - Install into the user's home (`~/.local`) without disturbing the system. Use `sudo` only for apt packages (Linux) and tell the user before running it. If sudo needs a password, ask the user to run the command with the `! <command>` prefix.
-- Prefer prebuilt binaries over building from source. Build from source only if the user asks.
+- Prefer prebuilt binaries over building from source. Build from source only if the user asks, or (after asking) when a prebuilt gRPC fails the OpenSSL check in step 4.
 - Never overwrite the user's existing config files. Merge JSON edits into them and show what changed.
 - Do not use `curl | sh` for anything that is not named below.
 - Stop and report on any failed step; do not continue past a failure that later steps depend on.
@@ -51,34 +51,53 @@ Check: `cmake --version`; parse the version and require ≥ 3.22.
 - Linux, if missing/too old: download `https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-<x86_64|aarch64>.tar.gz` to a temp dir, extract into `~/.local/cmake` with `--strip-components=1`, symlink `~/.local/cmake/bin/*` into `~/.local/bin/`.
 - macOS, if missing/too old: `brew install cmake`.
 
-## Step 4: gRPC, Protobuf, Abseil in `~/.local/grpc-openssl`
+## Step 4: gRPC, Protobuf, Abseil in `~/.local/grpc-openssl` (docs/setup.md section 4)
 
-Check: `~/.local/grpc-openssl/bin/protoc`, `~/.local/grpc-openssl/bin/grpc_cpp_plugin` exist, and CMake configs exist: `find ~/.local/grpc-openssl -name 'gRPCConfig.cmake' -o -name 'protobuf-config.cmake' -o -name 'abslConfig.cmake'` finds all three. If everything is present, skip.
+gRPC must use **OpenSSL**, not its bundled BoringSSL: OpenTofu's mutual TLS needs it, and the provider refuses to compile otherwise. The prefix is `~/.local/grpc-openssl` on purpose; a gRPC in `~/.local/grpc` (the quick start's default folder, BoringSSL) is not usable here: leave it alone.
 
-- Linux, if missing:
+Check, in this order:
+1. `~/.local/grpc-openssl/bin/protoc` and `bin/grpc_cpp_plugin` exist, and the CMake configs exist: `find ~/.local/grpc-openssl -name 'gRPCConfig.cmake' -o -name 'protobuf-config.cmake' -o -name 'abslConfig.cmake'` finds all three.
+2. **OpenSSL check:** `grep -q 'find_package(OpenSSL' ~/.local/grpc-openssl/lib/cmake/grpc/gRPCConfig.cmake` succeeds. An OpenSSL-based install passes it; a BoringSSL-based one fails it (and has `lib/libssl.a`).
+
+If both hold, skip. If 1 holds but 2 fails, the install is BoringSSL-based: tell the user, offer the source build below, and **ask before replacing anything**. Do not go on to step 5 with it.
+
+- Linux, if missing (prebuilt binaries from conda-forge):
   ```sh
   curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C ~/.local bin/micromamba    # linux-aarch64 on arm64; skip if micromamba already exists
   ~/.local/bin/micromamba create -y -p ~/.local/grpc-openssl -c conda-forge grpc-cpp libprotobuf libabseil
   ```
   If `~/.local/grpc-openssl` exists but is incomplete, ask the user before removing or replacing it.
-- macOS, if missing:
+- macOS, if missing (prebuilt bottles from Homebrew):
   ```sh
   brew install grpc protobuf abseil
   mkdir -p ~/.local && ln -sfn "$(brew --prefix)" ~/.local/grpc-openssl
   ```
   If `~/.local/grpc-openssl` already exists and is not a symlink, ask the user before changing it.
-- Optional (only on request): build from source following https://grpc.io/docs/languages/cpp/quickstart/ with `MY_INSTALL_DIR=$HOME/.local/grpc-openssl`, using the same compiler as the provider.
-- **gRPC must use OpenSSL, not its bundled BoringSSL** (OpenTofu's mutual TLS needs it). For a source build: install `libssl-dev` and add `-DgRPC_SSL_PROVIDER=package` to the quick start's cmake command; the prefix is `~/.local/grpc-openssl` on purpose (a BoringSSL-based `~/.local/grpc` is not usable here; leave it alone). The conda-forge and Homebrew packages are normally OpenSSL-based but unverified: if the build later stops with `gRPC must be built against OpenSSL 3`, tell the user and point to `BUILDING.md`.
+- After either install, run check 2. conda-forge's `libgrpc` and Homebrew's `grpc` declare a dependency on OpenSSL (their published dependency lists), so it normally passes. If it fails, or step 5 later stops with `gRPC must be built against OpenSSL 3`, tell the user and offer the source build.
+- Optional, only on request or after such a failure (docs/setup.md section 4.1): build gRPC from source against OpenSSL. It is the gRPC quick start with one extra flag, `-DgRPC_SSL_PROVIDER=package`, and installs gRPC, Protobuf, Abseil, re2, c-ares, zlib, `protoc` and `grpc_cpp_plugin` into the prefix.
+  1. Tell the user before `sudo`, then install the extra tools: Linux `sudo apt install -y autoconf libtool pkg-config libssl-dev`; macOS `brew install autoconf libtool pkg-config openssl@3`.
+  2. Tell the user it takes about 11 minutes on 20 cores (longer on fewer) and 4 GB of disk. In a temp directory (`T=$(mktemp -d)`), run the long steps in the background and wait for them:
+     ```sh
+     git clone --recurse-submodules -b v1.82.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc "$T/grpc"
+     mkdir -p "$T/grpc/cmake/build" && cd "$T/grpc/cmake/build"
+     cmake ../.. -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DCMAKE_CXX_STANDARD=17 \
+       -DgRPC_SSL_PROVIDER=package \
+       -DCMAKE_INSTALL_PREFIX=$HOME/.local/grpc-openssl          # macOS: also -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" (untested)
+     cmake --build . -j"$(nproc)"                                 # macOS: -j"$(sysctl -n hw.ncpu)"
+     cmake --install .
+     ```
+     Use the same compiler as for the provider. Return to the repo root afterwards.
+  3. Run checks 1 and 2 again, then `rm -rf "$T"`.
 
 ## Step 5: Command-line build
 
-Check: `build/terraform-provider-workaround` exists and `build/CMakeCache.txt` has `CMAKE_PREFIX_PATH` containing `.local/grpc-openssl`. If the executable exists and is newer than every file in `src/` and `proto/`, skip. If the cache was made with a different generator, compiler, or prefix, configure into a fresh `build/` (ask before deleting an existing one).
+Check: `build/terraform-provider-workaround` exists and `build/CMakeCache.txt` has `gRPC_DIR` and `Protobuf_DIR` under `.local/grpc-openssl` (the prefix itself is not recorded when none was given). If the executable exists and is newer than every file in `src/` and `proto/`, skip. If the cache was made with a different generator, compiler, or prefix, configure into a fresh `build/` (ask before deleting an existing one).
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$HOME/.local/grpc-openssl" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build --parallel 4
 ```
-Under WSL add `-DCMAKE_IGNORE_PREFIX_PATH=/mnt/c`. Check: `./build/terraform-provider-workaround --debug --port=0` (`--debug`: the provider refuses to start by hand without OpenTofu's magic cookie) prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|`; run it with a short timeout and kill it. If the build fails, show the first error and stop.
+`CMakeLists.txt` finds gRPC in `~/.local/grpc-openssl` by itself and ignores Windows folders under WSL, so no prefix option is needed. (`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` creates `build/compile_commands.json` for clangd.) Check: `./build/terraform-provider-workaround --debug --port=0` (`--debug`: the provider refuses to start by hand without OpenTofu's magic cookie) prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|`; run it with a short timeout and kill it. If the build fails, show the first error and stop.
 
 ## Step 6: VSCode extensions
 

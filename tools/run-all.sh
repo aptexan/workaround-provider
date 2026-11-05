@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs every check, in both modes where that makes sense: plaintext (Core told to skip encryption) and mutual TLS
+# Runs every check (the build itself first), in both modes where that makes sense: plaintext (Core told to skip encryption) and mutual TLS
 # (how Core runs by default). Exit status 0 only if all passed. check-tofu.sh is skipped (and says so) when tofu is not
 # installed or TOFU_DIR has no tofu.tf. check-tls.sh and the TLS runs need the openssl command. See TESTING.md.
 cd "$(dirname "$0")" || exit 2
@@ -12,6 +12,7 @@ run() {  # run <label> <script> [VAR=value ...]
   fi
   env "$@" ./$script || failed=1
 }
+run "check-build"                   check-build.sh
 run "check-startup"                 check-startup.sh
 run "check-health   (plaintext)"    check-health.sh  TLS=0
 run "check-streams  (plaintext)"    check-streams.sh TLS=0

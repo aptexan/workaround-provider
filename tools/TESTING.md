@@ -12,7 +12,7 @@ The scripts are deliberately plain. Every check is **one line** that says what i
 tools/run-all.sh
 ```
 
-That runs the checks below, **once in plaintext and once with mutual TLS** where that makes sense (108 checks in all), and ends with `ALL CHECKS PASSED` (or `SOME CHECKS FAILED`, with exit status 1). `check-tofu.sh` needs OpenTofu set up first (section 4); without it `run-all.sh` says `SKIPPED` for that one and runs the rest.
+That runs the checks below, **once in plaintext and once with mutual TLS** where that makes sense (118 checks in all), and ends with `ALL CHECKS PASSED` (or `SOME CHECKS FAILED`, with exit status 1). `check-tofu.sh` needs OpenTofu set up first (section 4); without it `run-all.sh` says `SKIPPED` for that one and runs the rest.
 
 You need: `bash`, `curl` with HTTP/2 support (`curl --version` should list `HTTP2`), `openssl` (the command line tool, to make test certificates), `python3` (only to occupy a port in `check-startup.sh`), and, for `check-tofu.sh`, `tofu` on your `PATH`. The provider itself must have been built against gRPC with **OpenSSL** (see `BUILDING.md`); otherwise it does not compile.
 
@@ -71,16 +71,21 @@ There is no gRPC client library here. A gRPC call is an HTTP/2 POST whose body i
 
 | Script | Needs OpenTofu? | Checks | What it proves | Takes |
 | --- | --- | --- | --- | --- |
+| `check-build.sh` | no | 10 | the build itself is sound: `build/` uses one installation and no Windows packages, `cmake --build` works, and a fresh configure never uses Windows packages and refuses mixed installations | about 25 s |
 | `check-startup.sh` | no | 19 | the provider validates what Core tells it, and refuses bad input without printing a handshake | about 13 s |
 | `check-health.sh` | no | 7 | the health service answers for `plugin`; other calls behave | under 1 s |
 | `check-streams.sh` | no | 6 | the stdio and broker streams stay open, don't block other calls, and are cancelled on shutdown | about 1.5 s |
 | `check-tls.sh` | no | 25 | mutual TLS: only Core's certificate is accepted, and the provider's certificate has go-plugin's properties | under 1 s |
 | `check-tofu.sh` | yes | 19 | the real Core runs plan, apply and destroy against the provider with no errors or warnings | under 1 s |
-| `run-all.sh` | | 108 | runs all of the above; health, streams and tofu twice (`TLS=0`, `TLS=1`) | about 14 s |
+| `run-all.sh` | | 118 | runs all of the above; health, streams and tofu twice (`TLS=0`, `TLS=1`) | about 14 s |
 
 `lib.sh` is a small helper the others load; it defines `expect` (the one-line check) and a few things for talking to a running provider. It is not run directly.
 
 Each script's exit status is 0 only if every check passed.
+
+### `check-build.sh`: is the build itself sound?
+
+The other checks run a provider that is already built. This one checks how it is built, because a `build/` configured against the wrong packages fails with hundreds of confusing compile errors (`Protobuf C++ gencode is built with an incompatible version of ...`). It looks at your real `build/`: its CMake cache has no dependency on a Windows drive (`/mnt/...`, reached through WSL's inherited `PATH`), all dependencies come from **one** installation prefix, and `cmake --build` succeeds (incremental, so a no-op when up to date). Then, in scratch folders, it checks the project's own protections: a fresh configure with the prefix works and uses only that prefix; configuring from the command line and then the way VS Code's CMake Tools does (which asks for `/usr/bin/gcc`, so CMake deletes the cache and re-runs without the `-D` options) still finds gRPC, whichever comes first; a fresh configure with a prefix that lacks gRPC, or with no prefix, never uses a Windows package; and packages taken from two different installations are refused (skipped, and says so, when no second install with Protobuf exists on the machine). The protections themselves are in the top-level `CMakeLists.txt`.
 
 ### `check-startup.sh`: refusing bad input
 
@@ -172,7 +177,7 @@ A check that cannot fail is worthless, so each check is tried against a provider
 tools/negative-tests/negative-check.sh        # about 7 minutes; not part of run-all.sh
 ```
 
-It works on a temporary copy of the project, and its last check proves that your source and `build/` are exactly as they were (content, size and modification times). See `tools/negative-tests/README.md` for the list of breaks, how to add one, and why it is built the way it is. There are 23 breaks: the provider's startup rules, health, streams and shutdown, the mutual-TLS rules (client certificate not requested or not verified, plaintext despite a certificate, no certificate in the handshake line, a non-PEM client certificate accepted) and seven properties of the provider's certificate. Every break turned its own check red: `passed 55, failed 0` on 2026-11-04. The unmodified provider also passed every normal script many times in a row with no flaky result.
+It works on a temporary copy of the project, and its last check proves that your source and `build/` are exactly as they were (content, size and modification times). See `tools/negative-tests/README.md` for the list of breaks, how to add one, and why it is built the way it is. There are 26 breaks: the provider's startup rules, health, streams and shutdown, the mutual-TLS rules (client certificate not requested or not verified, plaintext despite a certificate, no certificate in the handshake line, a non-PEM client certificate accepted) seven properties of the provider's certificate, and three protections in `CMakeLists.txt`: Windows `PATH` entries not removed, packages from two installations accepted, and no standard-prefix fallback (the first two are skipped on a machine with no Windows `PATH` or no second gRPC install). Every break turned its own check red: `passed 62, failed 0` on 2026-11-05. The unmodified provider also passed every normal script many times in a row with no flaky result.
 
 Writing the tests caught mistakes in the tests themselves. One more, from the TLS checks: a check on random output (the `=` padding in the certificate) passed a broken provider on one run in three, because one sample can be right by luck; it now looks at ten, and a later negative run caught the break. If a check depends on something random, look at many samples.
 

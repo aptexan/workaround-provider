@@ -10,7 +10,7 @@ tools/negative-tests/negative-check.sh        # takes about 7 minutes
 
 1. Copies the project to a temporary folder and builds it there. The copy is deleted at the end, even if you press Ctrl-C.
 2. Runs the four normal checks on the **unbroken** copy. They must all be green. If not, "red" later would mean nothing, so the script reports it as a failure.
-3. For each entry in the table below it breaks one feature in the copy's `src/tofu-plugin.cpp` by replacing one line of text, rebuilds, and runs the check that is supposed to notice. That check must go **red**.
+3. For each entry in the table below it breaks one feature in the copy (`src/tofu-plugin.cpp`, `src/server-cert.cpp` or `CMakeLists.txt`) by replacing one line of text, rebuilds, and runs the check that is supposed to notice. That check must go **red**.
 4. Prints one `PASS`/`FAIL` line per step and a summary. Exit status 0 only if everything passed.
 
 Two things are checked for every break, so a broken break cannot pass silently:
@@ -28,7 +28,7 @@ Because of that last check, **do not edit or rebuild the project while it runs**
 
 ## The breaks
 
-Each row is one break. The script's cases are written as `broken_provider <what> <check> <file> <old text> <new text>`.
+Each row is one break. The script's cases are written as `broken_provider <what> <check> <file> <old text> <new text>`, where the file is relative to the project (`src/tofu-plugin.cpp`, `src/server-cert.cpp` or `CMakeLists.txt`).
 
 | What is broken in the copy | Check that must go red |
 | --- | --- |
@@ -52,8 +52,11 @@ Each row is one break. The script's cases are written as `broken_provider <what>
 | certificate: no client-authentication usage | `check-tls.sh` |
 | certificate: no Certificate Sign usage | `check-tls.sh` |
 | certificate: `=` padding left in field 6 | `check-tls.sh` |
+| `CMakeLists.txt`: Windows `PATH` entries not removed | `check-build.sh` (skipped if `PATH` has no `/mnt` entries) |
+| `CMakeLists.txt`: no standard-prefix fallback (a build without a prefix, or VS Code's configure after losing it, then fails) | `check-build.sh` |
+| `CMakeLists.txt`: packages from two installations accepted | `check-build.sh` (skipped if there is no second install with Protobuf) |
 
-Before any break, the unbroken copy must be green on every check in every mode (`check-startup`, `check-health` and `check-streams` in plaintext and in TLS, `check-tls`, `check-tofu` in both modes).
+Before any break, the unbroken copy must be green on every check in every mode (`check-build` on the copy, `check-startup`, `check-health` and `check-streams` in plaintext and in TLS, `check-tls`, `check-tofu` in both modes).
 
 The `check-tofu.sh` cases are skipped (the script says `SKIP`) if `tofu` or `TOFU_DIR/tofu.tf` is missing. For those cases the script writes a private OpenTofu config pointing at the **copy**, via `TF_CLI_CONFIG_FILE`, so your `~/.tofurc` is not used and not changed. `check-tofu.sh` still deletes `terraform.tfstate*`, but in a private copy of your `*.tf` files, never in your real `TOFU_DIR`.
 
@@ -62,10 +65,10 @@ The `check-tofu.sh` cases are skipped (the script says `SKIP`) if `tofu` or `TOF
 Add one line before the final fingerprint check in `negative-check.sh`:
 
 ```sh
-broken_provider "what is broken" [VAR=value] check-something.sh tofu-plugin.cpp 'exact text in that file' 'what to replace it with'
+broken_provider "what is broken" "[VAR=value] check-something.sh" src/tofu-plugin.cpp 'exact text in that file' 'what to replace it with'
 ```
 
-The source file is `tofu-plugin.cpp` or `server-cert.cpp`. The text must occur **exactly once** in it (if it matches twice, for example because a comment quotes it, the script stops with `break applied to the source` and you make the text more specific).
+The file is `src/tofu-plugin.cpp`, `src/server-cert.cpp` or `CMakeLists.txt`. The text must occur **exactly once** in it (if it matches twice, for example because a comment quotes it, the script stops with `break applied to the source` and you make the text more specific).
 
 Keep the replaced text on **one line**, and make the replacement still compile. Then run the script and see the new line go `PASS`.
 

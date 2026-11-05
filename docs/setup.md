@@ -68,9 +68,31 @@ mkdir -p ~/.local && ln -sfn "$(brew --prefix)" ~/.local/grpc-openssl
 
 Check: `ls ~/.local/grpc-openssl/bin/protoc ~/.local/grpc-openssl/bin/grpc_cpp_plugin`.
 
-**Optional: build from source** (instead of the above). Follow the install section of https://grpc.io/docs/languages/cpp/quickstart/ and set `MY_INSTALL_DIR=$HOME/.local/grpc-openssl`. Use the same compiler for the libraries and the provider.
+### 4.1 Optional: build from source
 
-**gRPC must use OpenSSL, not its bundled BoringSSL.** OpenTofu's mutual TLS needs it (its client certificate has a P-521 key, which a BoringSSL-based gRPC server cannot accept). If you build from source, `apt install libssl-dev` first and add `-DgRPC_SSL_PROVIDER=package` to the quick start's `cmake` command (the default, `module`, bundles BoringSSL). A BoringSSL-based install at `~/.local/grpc` (the quick start's default prefix) is not usable here; leave it alone and use `~/.local/grpc-openssl` as above. The Homebrew and conda-forge packages above are normally built against OpenSSL, but this has not been checked: if the provider's build stops with `gRPC must be built against OpenSSL 3`, build gRPC yourself. Full reasons, dependency list and commands are in `BUILDING.md`.
+Use this instead of the prebuilt packages above if you want the route that was verified (Linux), or if the provider's build later stops with `gRPC must be built against OpenSSL 3`. It is the [gRPC quick start](https://grpc.io/docs/languages/cpp/quickstart/) with **one extra flag**, `-DgRPC_SSL_PROVIDER=package`. That one build installs everything the provider needs into `~/.local/grpc-openssl`: gRPC, Protobuf, Abseil, re2, c-ares, zlib, `protoc` and `grpc_cpp_plugin`. There is nothing else to install.
+
+**Why OpenSSL.** OpenTofu encrypts its connection to every provider and presents a certificate with a P-521 key. The TLS server must accept ECDSA with SHA-512 for that, which OpenSSL does and gRPC's bundled BoringSSL does not. The quick start's default build uses BoringSSL, so the provider would compile and start, and OpenTofu would then fail with `error reading server preface: EOF`. For this reason install into `~/.local/grpc-openssl` and **not** `~/.local/grpc` (the quick start's default folder): a BoringSSL-based gRPC is not usable here, and the provider refuses to compile against one.
+
+Extra tools, on top of steps 1 and 3 (they provide the compiler, Git and CMake):
+```sh
+sudo apt install -y autoconf libtool pkg-config libssl-dev        # Linux
+brew install autoconf libtool pkg-config openssl@3                # macOS
+```
+
+Build and install (use the same compiler as for the provider):
+```sh
+git clone --recurse-submodules -b v1.82.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc
+cd grpc && mkdir -p cmake/build && cd cmake/build
+cmake ../.. -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DCMAKE_CXX_STANDARD=17 \
+  -DgRPC_SSL_PROVIDER=package \
+  -DCMAKE_INSTALL_PREFIX=$HOME/.local/grpc-openssl
+cmake --build . -j"$(nproc)"          # macOS: -j"$(sysctl -n hw.ncpu)"
+cmake --install .
+```
+It takes about 11 minutes on 20 cores (longer on fewer) and 4 GB of disk; the `grpc` folder can be deleted afterwards. On macOS add `-DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"` to the `cmake` command (not tested on macOS). Then run the Check line above.
+
+The conda-forge and Homebrew packages above are built against OpenSSL: their published dependency lists (conda-forge `libgrpc` and Homebrew `grpc`, both 1.85.1, checked November 2026) include `openssl`. Not tested here: building the provider against Homebrew's OpenSSL 4. To confirm an install yourself, `grep -q 'find_package(OpenSSL' ~/.local/grpc-openssl/lib/cmake/grpc/gRPCConfig.cmake` succeeds for an OpenSSL-based gRPC. If the provider's build stops with `gRPC must be built against OpenSSL 3`, use this section.
 
 ## 5. Get the project
 
@@ -82,7 +104,14 @@ The `.vscode/` folder in the repo holds the project's VSCode config.
 
 ## 6. Build from the command line
 
-From the `workaround-provider` folder:
+From the `workaround-provider` folder, the short form:
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 4
+```
+CMake finds gRPC in `~/.local/grpc-openssl` by itself; if you installed it elsewhere, add `-DCMAKE_PREFIX_PATH=<that folder>` to the first command. After editing the code, run only the second command again.
+
+For clangd (steps 8 and 9) add `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` to the first command: it creates `build/compile_commands.json`, which the short form does not. The same with everything explicit:
 ```sh
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Debug \
@@ -93,6 +122,7 @@ cmake --build build --parallel 4
 Output: `build/terraform-provider-workaround`.
 Check: `./build/terraform-provider-workaround --debug --port=0` prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|` (`--debug` is needed because the provider refuses to start by hand without OpenTofu's magic cookie). Stop with `Ctrl+C`.
 Protobuf/gRPC sources are generated into `build/` automatically.
+If the configure or build fails, see the troubleshooting list in `BUILDING.md`.
 
 ## 7. VSCode extensions
 
@@ -119,7 +149,7 @@ If missing, add these to the workspace `settings.json`.
 
 ## 9. No red squiggles
 
-1. Complete step 6 first (creates `build/compile_commands.json` and the generated `*.pb.h` / `*.grpc.pb.h`).
+1. Complete step 6 first, with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` (it creates `build/compile_commands.json`; the build creates the generated `*.pb.h` / `*.grpc.pb.h`).
 2. `Ctrl+Shift+P` (`Cmd+Shift+P` on macOS) → **clangd: Restart language server**.
 3. Open `src/tofu-plugin.cpp` and a generated file in `build/` (e.g. `tfplugin5.pb.h`). No squiggles should appear.
 4. If includes or symbols are unresolved: rerun step 6 configure, then restart clangd again.
@@ -155,12 +185,12 @@ macOS note: GDB is not available; set `"MIMode": "lldb"` in `launch.json`.
 
 Instead of steps 1–10, let Claude do them. The skill checks what is already installed and runs only the missing steps.
 
-**Where it is:** `docs/skills/workaround-provider-dev-setup/SKILL.md` in the `workaround-provider` repo.
+**Where it is:** `docs/skill/workaround-provider-dev-setup/SKILL.md` in the `workaround-provider` repo.
 
 **Install:** Claude Code does not load skills from `docs/`, so copy the folder to your user skills once, from the repo root:
 ```sh
 mkdir -p ~/.claude/skills
-cp -r docs/skills/workaround-provider-dev-setup ~/.claude/skills/
+cp -r docs/skill/workaround-provider-dev-setup ~/.claude/skills/
 ```
 
 **Run:**
