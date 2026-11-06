@@ -9,10 +9,13 @@ The scripts are deliberately plain. Every check is **one line** that says what i
 ```sh
 # 1. build the provider (see BUILDING.md in the repository root)
 # 2. run everything
-tools/run-all.sh
+tools/run-all.sh                    # all checks, then the negative suite: about 25 minutes
+tools/run-all.sh --skip-negative    # the quick run: about 30 seconds
 ```
 
-That runs the checks below, **once in plaintext and once with mutual TLS** where that makes sense (118 checks in all), and ends with `ALL CHECKS PASSED` (or `SOME CHECKS FAILED`, with exit status 1). `check-tofu.sh` needs OpenTofu set up first (section 4); without it `run-all.sh` says `SKIPPED` for that one and runs the rest.
+**Negative tests run by default.** They come in two forms: the *negative checks* inside each script (the provider must refuse a missing cookie, an unwanted client, a bad configuration: see section 3), and the *negative suite* (`negative-tests/negative-check.sh`), which breaks a copy of the provider on purpose and requires the checks to notice. `--skip-negative` (or `SKIP_NEGATIVE=1`) leaves out both. Every `check-*.sh` takes the same option and then runs only its positive checks; it is the only option they take. The long suite needs VS Code closed and this project left alone while it runs.
+
+That runs the checks below, **once in plaintext and once with mutual TLS** where that makes sense (447 checks, 359 with `--skip-negative`), and ends with `ALL CHECKS PASSED` (or `SOME CHECKS FAILED`, with exit status 1). `check-tofu.sh` needs OpenTofu set up first (section 4); without it `run-all.sh` says `SKIPPED` for that one and runs the rest.
 
 You need: `bash`, `curl` with HTTP/2 support (`curl --version` should list `HTTP2`), `openssl` (the command line tool, to make test certificates), `python3` (only to occupy a port in `check-startup.sh`), and, for `check-tofu.sh`, `tofu` on your `PATH`. The provider itself must have been built against gRPC with **OpenSSL** (see `BUILDING.md`); otherwise it does not compile.
 
@@ -71,13 +74,27 @@ There is no gRPC client library here. A gRPC call is an HTTP/2 POST whose body i
 
 | Script | Needs OpenTofu? | Checks | What it proves | Takes |
 | --- | --- | --- | --- | --- |
+| `check-unit.sh` | no | 169 | the Terraform value model and its msgpack/JSON encodings, and the resource rules (validate, plan, apply), as plain C++ unit tests | under 1 s |
 | `check-build.sh` | no | 10 | the build itself is sound: `build/` uses one installation and no Windows packages, `cmake --build` works, and a fresh configure never uses Windows packages and refuses mixed installations | about 25 s |
 | `check-startup.sh` | no | 19 | the provider validates what Core tells it, and refuses bad input without printing a handshake | about 13 s |
 | `check-health.sh` | no | 7 | the health service answers for `plugin`; other calls behave | under 1 s |
 | `check-streams.sh` | no | 6 | the stdio and broker streams stay open, don't block other calls, and are cancelled on shutdown | about 1.5 s |
 | `check-tls.sh` | no | 25 | mutual TLS: only Core's certificate is accepted, and the provider's certificate has go-plugin's properties | under 1 s |
 | `check-tofu.sh` | yes | 19 | the real Core runs plan, apply and destroy against the provider with no errors or warnings | under 1 s |
-| `run-all.sh` | | 118 | runs all of the above; health, streams and tofu twice (`TLS=0`, `TLS=1`) | about 14 s |
+| `check-data.sh` | yes | 80 | the real Core follows real data through create, no change, update, replacement and destroy; mistakes come back as the provider's own messages | about 6 s |
+| `run-all.sh` | | 447 / 359 | runs all of the above; health, streams, tofu and data twice (`TLS=0`, `TLS=1`); then the negative suite unless `--skip-negative` | about 30 s with `--skip-negative`, about 25 minutes without |
+
+**Which checks are negative** (left out by `--skip-negative`; the numbers are checks per script, default / skipped):
+
+| Script | Default / skipped | The negative checks |
+| --- | --- | --- |
+| `check-unit.sh` | 169 / 133 | every case that expects an error: a value that does not fit its type, malformed msgpack, a wrong attribute count, JSON state with mistakes, an invalid configuration |
+| `check-startup.sh` | 19 / 10 | no cookie, wrong cookie, protocol versions with nothing in common, a bad port range, a taken port |
+| `check-health.sh` | 7 / 5 | an unknown service name, a method that does not exist |
+| `check-tls.sh` | 25 / 17 | no client certificate, someone else's, plaintext, a different server certificate, the wrong name, TLS 1.1, a client certificate that is not PEM |
+| `check-build.sh` | 10 / 7 | a prefix without gRPC, no prefix, two installations mixed |
+| `check-data.sh` | 80 / 66 | the five kinds of configuration mistake |
+| `check-streams.sh`, `check-tofu.sh` | 6 and 19, unchanged | none |
 
 `lib.sh` is a small helper the others load; it defines `expect` (the one-line check) and a few things for talking to a running provider. It is not run directly.
 
@@ -125,59 +142,61 @@ Always in TLS mode. It plays Core with `curl` and `openssl`, using a client cert
 
 "Refused" for a connection means curl got no reply at all. A client certificate that is wrong is refused by closing the connection, not with a gRPC error. The Go client behaves the same way, which is how Core saw the failure described in `BUILDING.md` before gRPC was built against OpenSSL.
 
+### `check-unit.sh`: the provider's core, without OpenTofu
+
+Runs `build/unit-tests` (source in `tests/`, built with the provider). It tests the **value model and its encodings** against byte sequences worked out from the msgpack specification and the go-cty source that OpenTofu uses: null, unknown (`d4 00 00`), strings, every integer boundary, collections, objects (every attribute, sorted); the many ways a number may arrive; mistakes such as a wrong attribute count, trailing bytes or truncation, each reported with the path to the error; a round trip; and the JSON that Core stores a resource's state in. It also tests the **rules of the resource**: every validation error and warning, and how a change is planned and applied for create, update, replacement and destroy. No gRPC and no OpenTofu are involved, so a failure here points at the logic, not at the wiring.
+
+### `check-data.sh`: does the data come through?
+
+The real OpenTofu runs the configuration in `tools/tofu-test/` and follows its three resources through their life, reading every value back from OpenTofu's own plan and state JSON (`tofu show -json`), so what is compared is what Core actually understood:
+
+| Step | What it checks |
+| --- | --- |
+| validate | the provider accepts the configuration |
+| plan | `id` unknown, `enabled` filled with its default, `summary` already known, a set loses its duplicate, a resource whose name comes from another resource's id has an unknown name and summary |
+| apply that plan | every attribute: string, number, a fraction, map, list (order kept), set, sensitive marking, the id's format, the outputs |
+| plan again | **no changes**: the stored state, read back and compared, equals what was applied |
+| update in place | only the changed resource, the same id, the summary follows |
+| a fraction | `0.1` survives the round trip with no drift |
+| replacement | a new name replaces the resource (new id, `replace_paths` is `name`) and leaves the others alone |
+| a boolean `false` | no drift; the provider's warning is shown |
+| mistakes | five kinds (size, name, provider prefix, ratio, two at once) come back as the provider's own `Error:` text, pointing at the attribute, and the state is not touched |
+| destroy | the state is empty |
+
+Clean steps also require no `[ERROR]` or `[WARN]` line in the debug log. The values compared come from `tools/tofu-test/main.tf`; change a value there and this script's expectations with it.
+
 ### `check-tofu.sh`: the real thing
 
-Runs `tofu plan`, `tofu apply -auto-approve` and `tofu destroy -auto-approve` with `TF_LOG=DEBUG`, and for each checks: exit status 0, no `[ERROR]` lines, no `[WARN]` lines, no `Error:` messages, and that every provider process Core started (`starting plugin`) also logged `plugin process exited`. Then that no provider process is left running. It also checks that Core really used mutual TLS in TLS mode (Core logs `configuring client automatic mTLS` only then) and did not in plaintext mode, so the mode asked for is the mode that ran. With `TLS=1` it leaves encryption on, as in normal use; without it, it sets `TF_DISABLE_PLUGIN_TLS=1`. This is the most important check because the other side of the conversation is the genuine OpenTofu. A provider that Core had to kill shows up as `[WARN]`/`[ERROR]` lines.
+Uses the same `tools/tofu-test/` configuration. Runs `tofu plan`, `tofu apply -auto-approve` and `tofu destroy -auto-approve` with `TF_LOG=DEBUG`, and for each checks: exit status 0, no `[ERROR]` lines, no `[WARN]` lines, no `Error:` messages, and that every provider process Core started (`starting plugin`) also logged `plugin process exited`. Then that no provider process is left running. It also checks that Core really used mutual TLS in TLS mode (Core logs `configuring client automatic mTLS` only then) and did not in plaintext mode, so the mode asked for is the mode that ran. With `TLS=1` it leaves encryption on, as in normal use; without it, it sets `TF_DISABLE_PLUGIN_TLS=1`. This is the most important check because the other side of the conversation is the genuine OpenTofu. A provider that Core had to kill shows up as `[WARN]`/`[ERROR]` lines.
 
 It **deletes `terraform.tfstate*` in `TOFU_DIR`** before and after, so never point it at a directory with real state. Logs go to `$TMPDIR/tofu-logs/` (`/tmp/tofu-logs/`).
 
-## 4. One-time OpenTofu setup (only for `check-tofu.sh`)
+## 4. One-time OpenTofu setup (only for `check-tofu.sh` and `check-data.sh`)
 
-1. Create a directory (default `~/wpe`, or set `TOFU_DIR`) with two files.
+The test configuration is in the repository (`tools/tofu-test/`) and the scripts run it in a private copy, so the only thing to set up is where OpenTofu finds the provider. Create `~/.tofurc` (or merge into yours) with the **absolute** path of the build folder:
 
-   `tofu.tf`
-   ```hcl
-   terraform {
-     required_version = "1.13.1"        # change this if your tofu version differs
-     required_providers {
-       workaround = {
-         source  = "aptexan/workaround"
-         version = "0.0.1"
-       }
-     }
-   }
-   ```
+```hcl
+provider_installation {
+  dev_overrides {
+    "aptexan/workaround" = "/absolute/path/to/this/repo/build"
+  }
+  direct {}
+}
+```
 
-   `example.tf`
-   ```hcl
-   resource "workaround_example" "example" {
-   }
-   ```
-2. Create `~/.tofurc` (or merge into yours) with the **absolute** path of the build folder:
+Do not run `tofu init`; with `dev_overrides` it is not needed, and OpenTofu prints a warning about the override, which is normal. Then `tools/check-tofu.sh` and `tools/check-data.sh`.
 
-   ```hcl
-   provider_installation {
-     dev_overrides {
-       "aptexan/workaround" = "/absolute/path/to/this/repo/build"
-     }
-     direct {}
-   }
-   ```
-
-   Do not run `tofu init`; with `dev_overrides` it is not needed, and OpenTofu prints a warning about the override, which is normal.
-3. `TOFU_DIR=/path/to/dir tools/check-tofu.sh`
-
-To see what OpenTofu does by hand: `cd <dir>; TF_DISABLE_PLUGIN_TLS=1 TF_LOG=DEBUG tofu plan`.
+`TOFU_DIR=<folder with a tofu.tf> tools/check-tofu.sh` runs your own configuration instead (its `terraform.tfstate*` files are **deleted** before and after, so never point it at real state). To see what OpenTofu does by hand, copy `tools/tofu-test/*.tf` somewhere and run `TF_DISABLE_PLUGIN_TLS=1 TF_LOG=DEBUG tofu plan` there.
 
 ## 5. How we know the tests themselves are right: negative tests
 
 A check that cannot fail is worthless, so each check is tried against a provider that is **deliberately broken**, one feature at a time. Each break must turn its own check red and nothing else. This is automated:
 
 ```sh
-tools/negative-tests/negative-check.sh        # about 7 minutes; not part of run-all.sh
+tools/negative-tests/negative-check.sh        # about 25 minutes; run-all.sh runs it last, unless --skip-negative
 ```
 
-It works on a temporary copy of the project, and its last check proves that your source and `build/` are exactly as they were (content, size and modification times). See `tools/negative-tests/README.md` for the list of breaks, how to add one, and why it is built the way it is. There are 26 breaks: the provider's startup rules, health, streams and shutdown, the mutual-TLS rules (client certificate not requested or not verified, plaintext despite a certificate, no certificate in the handshake line, a non-PEM client certificate accepted) seven properties of the provider's certificate, and three protections in `CMakeLists.txt`: Windows `PATH` entries not removed, packages from two installations accepted, and no standard-prefix fallback (the first two are skipped on a machine with no Windows `PATH` or no second gRPC install). Every break turned its own check red: `passed 62, failed 0` on 2026-11-05. The unmodified provider also passed every normal script many times in a row with no flaky result.
+It works on a temporary copy of the project, and its last check proves that your source and `build/` are exactly as they were (content, size and modification times). See `tools/negative-tests/README.md` for the list of breaks, how to add one, and why it is built the way it is. There are 46 break cases: the provider's startup rules, health, streams and shutdown, the mutual-TLS rules (client certificate not requested or not verified, plaintext despite a certificate, no certificate in the handshake line, a non-PEM client certificate accepted), seven properties of the provider's certificate, the data layer (the codec, the resource rules, and what is sent to OpenTofu: defaults, replacement, validation, sensitivity, diagnostics and their attribute paths, stored state), and three protections in `CMakeLists.txt`: Windows `PATH` entries not removed, packages from two installations accepted, and no standard-prefix fallback (the first two are skipped on a machine with no Windows `PATH` or no second gRPC install). Every break turned its own check red. The last full run (2026-11-06, 107 steps) was `passed 105, failed 2`; both failures were weaknesses in the new data checks, not in the provider (an end-to-end check that cannot see a duplicate in a set, because OpenTofu removes duplicates itself; and a check that looked for the attribute name in the debug log instead of in the line Core points at). Both were fixed and re-verified with `ONLY='attribute path|duplicates'` (`passed 17, failed 0`); the full run was not repeated. The unmodified provider also passed every normal script many times in a row with no flaky result.
 
 Writing the tests caught mistakes in the tests themselves. One more, from the TLS checks: a check on random output (the `=` padding in the certificate) passed a broken provider on one run in three, because one sample can be right by luck; it now looks at ten, and a later negative run caught the break. If a check depends on something random, look at many samples.
 
@@ -190,7 +209,7 @@ If you change a check script, run `negative-check.sh` again.
 - **No comparison with a real Go provider.** The expected behaviour comes from reading the go-plugin and OpenTofu sources. The `curl` scripts act as Core according to that reading, so they test our implementation of it, not Go's. Only `check-tofu.sh` uses the genuine Core. (A Go reference plugin to compare against is a planned, deferred, stronger check.)
 - **Encryption details.** Mutual TLS is tested against the real Core (`TLS=1 check-tofu.sh`) and against `curl`/`openssl` playing Core (`check-tls.sh`). Not tested: which cipher suites are chosen, certificate expiry handling, and Unix-socket TLS.
 - **Provider protocol 6, Unix sockets, and broker multiplexing.** Not implemented, so not tested.
-- **Real data.** The provider has one resource with no attributes, so the checks cover the transport and lifecycle, not resource handling.
+- **Real data, beyond the one stand-in resource.** `workaround_example` exists to exercise the protocol (every attribute kind, defaults, replacement, diagnostics). There are no data sources, nested blocks, imports or private state, so none of that is tested. Encoding parity with Go comes from reading the go-cty source and from the real Core accepting every value; a Go reference to compare bytes against is deferred.
 - **Many streams at once.** Only two open streams were tried.
 - **The wording of stderr messages.** The refusal checks require exit status 1 and no handshake line, not particular text.
 

@@ -195,8 +195,19 @@ target_link_libraries(plugin_grpc_proto
 
   ## Tartget name (executable file) is same as the project name (tofu-plugin-cpp)
   set (plugin_exe_name "terraform-provider-workaround")
+  # The provider's own logic: Terraform values and their msgpack/JSON encodings (cty), schemas, and the rules of the
+  # one resource. No gRPC or protobuf in here, so the unit tests link it on its own. nlohmann/json (single header,
+  # third_party/nlohmann) does the msgpack and JSON reading and writing.
+  add_library(provider_core STATIC
+    src/cty.cpp
+    src/schema.cpp
+    src/workaround-example.cpp)
+  target_include_directories(provider_core PUBLIC src third_party)
+  target_link_libraries(provider_core PUBLIC absl::status absl::statusor absl::strings)
+
   add_executable(${plugin_exe_name} "src/tofu-plugin.cpp" "src/server-cert.cpp")
   target_link_libraries(${plugin_exe_name}
+    provider_core
     plugin_grpc_proto
     absl::check
     absl::flags
@@ -206,3 +217,10 @@ target_link_libraries(plugin_grpc_proto
     ${_REFLECTION}
     ${_GRPC_GRPCPP}
     ${_PROTOBUF_LIBPROTOBUF})
+
+  # tools/check-unit.sh runs this: the unit tests of provider_core (no OpenTofu, no gRPC).
+  add_executable(unit-tests
+    tests/unit-tests.cpp
+    tests/cty-tests.cpp
+    tests/example-tests.cpp)
+  target_link_libraries(unit-tests provider_core)

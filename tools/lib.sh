@@ -5,6 +5,19 @@
 PROVIDER=${PROVIDER:-$HOME/tpc/build/terraform-provider-workaround}
 COOKIE=d602bf8f470bc67ca7faa0386276bbdd4330efaf76d1a219cb4d6991ca9872b2    # go-plugin's fixed "magic cookie"
 PASSED=0; FAILED=0
+
+# --skip-negative (or SKIP_NEGATIVE=1) leaves out the NEGATIVE checks: the ones where the provider must refuse something
+# (a missing cookie, a client without the right certificate, a mistake in the configuration). They run by default.
+# This is the only option the check scripts take.
+SKIP_NEGATIVE=${SKIP_NEGATIVE:-0}
+for _option in "$@"; do
+  case $_option in
+    --skip-negative) SKIP_NEGATIVE=1 ;;
+    *) echo "unknown option: $_option (the only option is --skip-negative)"; exit 2 ;;
+  esac
+done
+negatives() { [ "$SKIP_NEGATIVE" != 1 ]; }                  # `if negatives; then ... fi` around the negative checks
+negatives || echo "== negative checks are skipped (--skip-negative)"
 WORK=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$WORK"' EXIT                    # stop anything we started in the background
 
@@ -73,3 +86,23 @@ grpc_call() {  # grpc_call <path> [extra curl options]
        --data-binary @- "$@" "$BASE_URL$path" | tr -d '\r' | grep -i '^grpc-status:' | cut -d' ' -f2
 }
 reply_hex() { od -An -tx1 "$WORK/reply" | tr -s ' \n' ' ' | sed 's/^ //; s/ $//'; }   # the reply body as hex bytes
+
+# --- for the scripts that run the real OpenTofu ------------------------------------------------------------------------
+
+# Sets up everything those scripts share: TOFU_DIR (a PRIVATE copy of tools/tofu-test, so state files never land in the
+# repository, unless the caller gave its own TOFU_DIR with a tofu.tf in it), debug logging, and the TLS mode. Leaves the
+# shell in TOFU_DIR; logs go to $LOGS.
+#   TLS=1  leave encryption on, which is how Core normally runs. Otherwise Core is told to skip it (plaintext).
+setup_tofu() {
+  if [ -z "${TOFU_DIR:-}" ]; then
+    TOFU_DIR=$WORK/tofu-dir; mkdir "$TOFU_DIR"
+    cp "$(dirname "${BASH_SOURCE[0]}")"/tofu-test/*.tf "$TOFU_DIR"/
+  fi
+  [ -f "$TOFU_DIR/tofu.tf" ] || { echo "no tofu.tf in TOFU_DIR ($TOFU_DIR)"; exit 2; }
+  LOGS=${TMPDIR:-/tmp}/tofu-logs; mkdir -p "$LOGS"
+  cd "$TOFU_DIR" || exit 2
+  export TF_LOG=DEBUG
+  if [ "$TLS" = 1 ]; then unset TF_DISABLE_PLUGIN_TLS; else export TF_DISABLE_PLUGIN_TLS=1; fi
+  echo "== mode: $MODE"
+  rm -f terraform.tfstate*
+}

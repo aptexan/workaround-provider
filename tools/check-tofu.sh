@@ -1,19 +1,13 @@
 #!/bin/bash
 # The real thing: run the real OpenTofu (plan, apply, destroy) against the provider with debug logging, and check that
-# it succeeds and logs no errors or warnings.
+# it succeeds and logs no errors or warnings. It uses the configuration in tools/tofu-test, which has resources that
+# set every kind of attribute (see check-data.sh for what the values are checked against).
 #   Needs: the provider built, and ~/.tofurc with a dev_overrides entry for it (see TESTING.md).
-#   TOFU_DIR = the directory holding your tofu.tf (default ~/wpe). Its terraform.tfstate* files are DELETED before and
-#   after, so do not point it at a directory with real state. Logs: $TMPDIR/tofu-logs/ (or /tmp/tofu-logs/).
+#   TOFU_DIR=<folder with a tofu.tf> uses your own configuration instead; its terraform.tfstate* files are DELETED
+#   before and after, so do not point it at a folder with real state. Logs: $TMPDIR/tofu-logs/ (or /tmp/tofu-logs/).
 #   Plaintext by default (TF_DISABLE_PLUGIN_TLS=1). TLS=1 leaves encryption on, which is how Core normally runs.
 . "$(dirname "$0")/lib.sh"
-TOFU_DIR=${TOFU_DIR:-$HOME/wpe}
-LOGS=${TMPDIR:-/tmp}/tofu-logs; mkdir -p "$LOGS"
-cd "$TOFU_DIR" || exit 2
-export TF_LOG=DEBUG
-# TLS=1: leave encryption on, as in normal use. Otherwise tell Core to skip it (plaintext).
-if [ "$TLS" = 1 ]; then unset TF_DISABLE_PLUGIN_TLS; else export TF_DISABLE_PLUGIN_TLS=1; fi
-echo "== mode: $MODE"
-rm -f terraform.tfstate*
+setup_tofu
 
 for command in "plan" "apply -auto-approve" "destroy -auto-approve"; do
   name=${command%% *}; log=$LOGS/$name.log

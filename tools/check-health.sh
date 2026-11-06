@@ -17,7 +17,9 @@ expect "health: 'plugin' succeeds"        "$(printf "$ASK_PLUGIN" | grpc_call /g
 expect "health: 'plugin' is SERVING"      "$(reply_hex)" "$SERVING"
 expect "health: '' succeeds"              "$(printf "$ASK_EMPTY" | grpc_call /grpc.health.v1.Health/Check)" 0
 expect "health: '' is SERVING"            "$(reply_hex)" "$SERVING"
-expect "health: unknown name is NOT_FOUND (5)" "$(printf "$ASK_UNKNOWN" | grpc_call /grpc.health.v1.Health/Check)" 5
 expect "GetSchema succeeds"               "$(printf "$NO_FIELDS" | grpc_call /tfplugin5.Provider/GetSchema)" 0
-expect "unknown method is UNIMPLEMENTED (12)" "$(printf "$NO_FIELDS" | grpc_call /tfplugin5.Provider/NoSuchMethod)" 12
+if negatives; then
+  expect "health: unknown name is NOT_FOUND (5)" "$(printf "$ASK_UNKNOWN" | grpc_call /grpc.health.v1.Health/Check)" 5
+  expect "unknown method is UNIMPLEMENTED (12)" "$(printf "$NO_FIELDS" | grpc_call /tfplugin5.Provider/NoSuchMethod)" 12
+fi
 summary

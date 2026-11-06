@@ -41,13 +41,17 @@
 #include "absl/flags/parse.h"
 #include "absl/log/initialize.h"
 #include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
 
 #include "grpc_broker.grpc.pb.h"
 #include "grpc_controller.grpc.pb.h"
 #include "grpc_stdio.grpc.pb.h"
+#include "cty.h"
+#include "schema.h"
 #include "server-cert.h"
+#include "workaround-example.h"
 #include "tfplugin5.grpc.pb.h"
 
 using grpc::Server;
@@ -71,82 +75,259 @@ constexpr char kMagicCookieValue[] =
 // Provider protocol major versions this binary serves (package tfplugin5).
 constexpr int kSupportedProtocolVersions[] = {5};
 
-// Minimal implementation of the OpenTofu provider protocol (tfplugin5).
-// It exposes one resource type, "workaround_example", which has no attributes.
-// RPCs that are not overridden here return UNIMPLEMENTED.
+// The OpenTofu provider protocol (tfplugin5). The rules (what is valid, how a change is planned and applied) are in
+// workaround-example.cpp, and the value encoding is in cty.cpp; this class translates between them and the protobuf
+// messages. A problem with a request is answered with an error diagnostic, which Core shows to the user, and not with a
+// gRPC error, which would look like a crash.
 class ProviderServiceImpl final : public tfplugin5::Provider::Service {
-  // msgpack encoding of an empty object (a fixmap with zero entries).
-  static constexpr char kEmptyObject[] = "\x80";
+  using Diagnostics = google::protobuf::RepeatedPtrField<tfplugin5::Diagnostic>;
 
-  static void SetEmptyObject(tfplugin5::DynamicValue* value) {
-    value->set_msgpack(kEmptyObject, 1);
+  // --- diagnostics ---------------------------------------------------------------------------------------------------
+
+  static void SetPath(const workaround::AttributePath& path, tfplugin5::AttributePath* out) {
+    for (const workaround::PathStep& step : path) {
+      tfplugin5::AttributePath::Step* proto = out->add_steps();
+      switch (step.kind) {
+        case workaround::PathStep::Kind::kAttribute: proto->set_attribute_name(step.name); break;
+        case workaround::PathStep::Kind::kKey: proto->set_element_key_string(step.name); break;
+        case workaround::PathStep::Kind::kIndex: proto->set_element_key_int(step.index); break;
+      }
+    }
   }
 
+  static void AddDiagnostics(const std::vector<workaround::Diagnostic>& diagnostics, Diagnostics* out) {
+    for (const workaround::Diagnostic& diagnostic : diagnostics) {
+      tfplugin5::Diagnostic* proto = out->Add();
+      proto->set_severity(diagnostic.severity == workaround::Diagnostic::Severity::kError
+                              ? tfplugin5::Diagnostic::ERROR
+                              : tfplugin5::Diagnostic::WARNING);
+      proto->set_summary(diagnostic.summary);
+      proto->set_detail(diagnostic.detail);
+      if (!diagnostic.attribute.empty()) SetPath(diagnostic.attribute, proto->mutable_attribute());
+    }
+  }
+
+  static bool HasError(const std::vector<workaround::Diagnostic>& diagnostics) {
+    for (const workaround::Diagnostic& diagnostic : diagnostics) {
+      if (diagnostic.severity == workaround::Diagnostic::Severity::kError) return true;
+    }
+    return false;
+  }
+
+  static void AddError(Diagnostics* out, std::string summary, std::string detail) {
+    AddDiagnostics({workaround::Diagnostic{workaround::Diagnostic::Severity::kError, std::move(summary),
+                                           std::move(detail), {}}},
+                   out);
+  }
+
+  // --- values --------------------------------------------------------------------------------------------------------
+
+  // An empty DynamicValue is null. On a value that does not fit the type, adds an error and returns nothing.
+  static std::optional<cty::Value> Decode(const tfplugin5::DynamicValue& dynamic, const cty::Type& type,
+                                          const char* what, Diagnostics* out) {
+    if (dynamic.msgpack().empty() && dynamic.json().empty()) return cty::Value::Null();
+    absl::StatusOr<cty::Value> value =
+        dynamic.msgpack().empty() ? cty::DecodeJson(dynamic.json(), type) : cty::DecodeMsgpack(dynamic.msgpack(), type);
+    if (!value.ok()) {
+      AddError(out, absl::StrCat("Cannot read ", what), std::string(value.status().message()));
+      return std::nullopt;
+    }
+    return *std::move(value);
+  }
+
+  static bool Encode(const cty::Value& value, const cty::Type& type, const char* what,
+                     tfplugin5::DynamicValue* dynamic, Diagnostics* out) {
+    absl::StatusOr<std::string> bytes = cty::EncodeMsgpack(value, type);
+    if (!bytes.ok()) {
+      AddError(out, absl::StrCat("Cannot write ", what), std::string(bytes.status().message()));
+      return false;
+    }
+    dynamic->set_msgpack(*std::move(bytes));
+    return true;
+  }
+
+  static tfplugin5::Schema ToProto(const schema::Block& block) {
+    tfplugin5::Schema proto;
+    proto.set_version(block.version);
+    tfplugin5::Schema::Block* proto_block = proto.mutable_block();
+    proto_block->set_description(block.description);
+    for (const schema::Attribute& attribute : block.attributes) {
+      tfplugin5::Schema::Attribute* proto_attribute = proto_block->add_attributes();
+      proto_attribute->set_name(attribute.name);
+      proto_attribute->set_type(attribute.type->ToJson());
+      proto_attribute->set_description(attribute.description);
+      proto_attribute->set_required(attribute.required);
+      proto_attribute->set_optional(attribute.optional);
+      proto_attribute->set_computed(attribute.computed);
+      proto_attribute->set_sensitive(attribute.sensitive);
+    }
+    return proto;
+  }
+
+  // The only resource type there is. Anything else is the caller's mistake.
+  static const schema::Block* ResourceSchema(const std::string& type_name, Diagnostics* out) {
+    if (type_name == workaround::kExampleType) return &workaround::ExampleSchema();
+    AddError(out, "Unknown resource type", absl::StrCat("This provider has no resource type \"", type_name, "\"."));
+    return nullptr;
+  }
+
+  // A short random text for new ids, e.g. "3fa9c01b".
+  static std::string RandomSuffix() {
+    std::random_device random;
+    return absl::StrFormat("%08x", random());
+  }
+
+ public:
   Status GetSchema(ServerContext*, const tfplugin5::GetProviderSchema::Request*,
                    tfplugin5::GetProviderSchema::Response* response) override {
-    // Provider block and the resource both have an empty block (no attributes).
-    response->mutable_provider()->mutable_block();
-    (*response->mutable_resource_schemas())["workaround_example"].mutable_block();
+    *response->mutable_provider() = ToProto(workaround::ProviderSchema());
+    (*response->mutable_resource_schemas())[workaround::kExampleType] = ToProto(workaround::ExampleSchema());
     return Status::OK;
   }
 
+  // In protocol 5 this is "validate the provider block". Core uses the prepared config as the config from then on.
   Status PrepareProviderConfig(
       ServerContext*, const tfplugin5::PrepareProviderConfig::Request* request,
       tfplugin5::PrepareProviderConfig::Response* response) override {
+    cty::TypePtr type = workaround::ProviderSchema().ImpliedType();
+    std::optional<cty::Value> config = Decode(request->config(), *type, "the provider configuration",
+                                              response->mutable_diagnostics());
+    if (!config) return Status::OK;
+    AddDiagnostics(workaround::ValidateProviderConfig(*config), response->mutable_diagnostics());
     *response->mutable_prepared_config() = request->config();
     return Status::OK;
   }
 
   Status ValidateResourceTypeConfig(
-      ServerContext*, const tfplugin5::ValidateResourceTypeConfig::Request*,
-      tfplugin5::ValidateResourceTypeConfig::Response*) override {
+      ServerContext*, const tfplugin5::ValidateResourceTypeConfig::Request* request,
+      tfplugin5::ValidateResourceTypeConfig::Response* response) override {
+    Diagnostics* diagnostics = response->mutable_diagnostics();
+    const schema::Block* block = ResourceSchema(request->type_name(), diagnostics);
+    if (block == nullptr) return Status::OK;
+    std::optional<cty::Value> config = Decode(request->config(), *block->ImpliedType(), "the configuration", diagnostics);
+    if (config) AddDiagnostics(workaround::ValidateExample(*config), diagnostics);
     return Status::OK;
   }
 
   Status ValidateDataSourceConfig(
-      ServerContext*, const tfplugin5::ValidateDataSourceConfig::Request*,
-      tfplugin5::ValidateDataSourceConfig::Response*) override {
+      ServerContext*, const tfplugin5::ValidateDataSourceConfig::Request* request,
+      tfplugin5::ValidateDataSourceConfig::Response* response) override {
+    AddError(response->mutable_diagnostics(), "Unknown data source type",
+             absl::StrCat("This provider has no data source type \"", request->type_name(), "\"."));
     return Status::OK;
   }
 
-  Status Configure(ServerContext*, const tfplugin5::Configure::Request*,
-                   tfplugin5::Configure::Response*) override {
+  Status Configure(ServerContext*, const tfplugin5::Configure::Request* request,
+                   tfplugin5::Configure::Response* response) override {
+    Diagnostics* diagnostics = response->mutable_diagnostics();
+    cty::TypePtr type = workaround::ProviderSchema().ImpliedType();
+    std::optional<cty::Value> config = Decode(request->config(), *type, "the provider configuration", diagnostics);
+    if (!config) return Status::OK;
+    std::vector<workaround::Diagnostic> problems = workaround::ValidateProviderConfig(*config);
+    AddDiagnostics(problems, diagnostics);
+    if (HasError(problems)) return Status::OK;
+    std::lock_guard<std::mutex> lock(settings_mutex_);
+    settings_ = workaround::SettingsFrom(*config);
     return Status::OK;
   }
 
+  // Core hands back the state it stored, as JSON, together with the schema version it was written with.
   Status UpgradeResourceState(
-      ServerContext*, const tfplugin5::UpgradeResourceState::Request*,
+      ServerContext*, const tfplugin5::UpgradeResourceState::Request* request,
       tfplugin5::UpgradeResourceState::Response* response) override {
-    SetEmptyObject(response->mutable_upgraded_state());
+    Diagnostics* diagnostics = response->mutable_diagnostics();
+    const schema::Block* block = ResourceSchema(request->type_name(), diagnostics);
+    if (block == nullptr) return Status::OK;
+    if (request->version() != block->version) {
+      AddError(diagnostics, "Unsupported state version",
+               absl::StrCat("The stored state has schema version ", request->version(),
+                            "; this provider can only read version ", block->version, "."));
+      return Status::OK;
+    }
+    if (request->raw_state().json().empty()) {
+      AddError(diagnostics, "Unsupported state format", "The stored state is not JSON (a legacy flatmap state).");
+      return Status::OK;
+    }
+    cty::TypePtr type = block->ImpliedType();
+    absl::StatusOr<cty::Value> state = cty::DecodeJson(request->raw_state().json(), *type);
+    if (!state.ok()) {
+      AddError(diagnostics, "Cannot read the stored state", std::string(state.status().message()));
+      return Status::OK;
+    }
+    Encode(*state, *type, "the upgraded state", response->mutable_upgraded_state(), diagnostics);
     return Status::OK;
   }
 
-  Status ReadResource(ServerContext*,
-                      const tfplugin5::ReadResource::Request* request,
+  // Everything lives in the state; there is no outside system that could have drifted. So the refreshed state is
+  // the state we were given.
+  Status ReadResource(ServerContext*, const tfplugin5::ReadResource::Request* request,
                       tfplugin5::ReadResource::Response* response) override {
-    *response->mutable_new_state() = request->current_state();
+    Diagnostics* diagnostics = response->mutable_diagnostics();
+    const schema::Block* block = ResourceSchema(request->type_name(), diagnostics);
+    if (block == nullptr) return Status::OK;
+    cty::TypePtr type = block->ImpliedType();
+    std::optional<cty::Value> state = Decode(request->current_state(), *type, "the current state", diagnostics);
+    if (state) Encode(*state, *type, "the new state", response->mutable_new_state(), diagnostics);
+    response->set_private_(request->private_());
     return Status::OK;
   }
 
   Status PlanResourceChange(
       ServerContext*, const tfplugin5::PlanResourceChange::Request* request,
       tfplugin5::PlanResourceChange::Response* response) override {
-    *response->mutable_planned_state() = request->proposed_new_state();
+    Diagnostics* diagnostics = response->mutable_diagnostics();
+    const schema::Block* block = ResourceSchema(request->type_name(), diagnostics);
+    if (block == nullptr) return Status::OK;
+    cty::TypePtr type = block->ImpliedType();
+    std::optional<cty::Value> prior = Decode(request->prior_state(), *type, "the prior state", diagnostics);
+    std::optional<cty::Value> proposed =
+        Decode(request->proposed_new_state(), *type, "the proposed new state", diagnostics);
+    if (!prior || !proposed) return Status::OK;
+
+    workaround::PlanResult plan = workaround::PlanExample(*prior, *proposed);
+    AddDiagnostics(plan.diagnostics, diagnostics);
+    if (!Encode(plan.planned, *type, "the planned state", response->mutable_planned_state(), diagnostics)) {
+      return Status::OK;
+    }
+    for (const workaround::AttributePath& path : plan.requires_replace) {
+      SetPath(path, response->add_requires_replace());
+    }
+    response->set_planned_private(request->prior_private());
     return Status::OK;
   }
 
   Status ApplyResourceChange(
       ServerContext*, const tfplugin5::ApplyResourceChange::Request* request,
       tfplugin5::ApplyResourceChange::Response* response) override {
-    // Echo the planned state: an empty object on create, null on destroy.
-    *response->mutable_new_state() = request->planned_state();
+    Diagnostics* diagnostics = response->mutable_diagnostics();
+    const schema::Block* block = ResourceSchema(request->type_name(), diagnostics);
+    if (block == nullptr) return Status::OK;
+    cty::TypePtr type = block->ImpliedType();
+    std::optional<cty::Value> prior = Decode(request->prior_state(), *type, "the prior state", diagnostics);
+    std::optional<cty::Value> planned = Decode(request->planned_state(), *type, "the planned state", diagnostics);
+    if (!prior || !planned) return Status::OK;
+
+    workaround::ProviderSettings settings;
+    {
+      std::lock_guard<std::mutex> lock(settings_mutex_);
+      settings = settings_;
+    }
+    std::vector<workaround::Diagnostic> problems;
+    cty::Value applied = workaround::ApplyExample(*prior, *planned, settings, RandomSuffix(), &problems);
+    AddDiagnostics(problems, diagnostics);
+    if (HasError(problems)) return Status::OK;
+    Encode(applied, *type, "the new state", response->mutable_new_state(), diagnostics);
+    response->set_private_(request->planned_private());
     return Status::OK;
   }
 
-  Status Stop(ServerContext*, const tfplugin5::Stop::Request*,
-              tfplugin5::Stop::Response*) override {
+  Status Stop(ServerContext*, const tfplugin5::Stop::Request*, tfplugin5::Stop::Response*) override {
     return Status::OK;
   }
+
+ private:
+  std::mutex settings_mutex_;
+  workaround::ProviderSettings settings_;  // set by Configure; read by Apply (RPCs can run on several threads)
 };
 
 // go-plugin's GRPCController: Core calls Shutdown when it is done with the

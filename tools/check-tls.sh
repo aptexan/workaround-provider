@@ -25,18 +25,24 @@ make_cert stranger                                   # a certificate that is NOT
 
 echo "== who may talk to the provider"
 expect "Core's certificate: the call works"                  "$(try_curl --cacert "$WORK/server.pem" --cert "$WORK/client.pem" --key "$WORK/client.key" "$URL")" 0
-expect "no client certificate: refused"                      "$(try_curl --cacert "$WORK/server.pem" "$URL")" "no reply"
-expect "someone else's client certificate: refused"          "$(try_curl --cacert "$WORK/server.pem" --cert "$WORK/stranger.pem" --key "$WORK/stranger.key" "$URL")" "no reply"
-expect "plaintext to the TLS port: refused"                  "$(try_curl --http2-prior-knowledge "http://127.0.0.1:$PORT/grpc.health.v1.Health/Check")" "no reply"
+if negatives; then
+  expect "no client certificate: refused"                      "$(try_curl --cacert "$WORK/server.pem" "$URL")" "no reply"
+  expect "someone else's client certificate: refused"          "$(try_curl --cacert "$WORK/server.pem" --cert "$WORK/stranger.pem" --key "$WORK/stranger.key" "$URL")" "no reply"
+  expect "plaintext to the TLS port: refused"                  "$(try_curl --http2-prior-knowledge "http://127.0.0.1:$PORT/grpc.health.v1.Health/Check")" "no reply"
+fi
 
 echo "== what the client (Core) checks about the provider"
-expect "provider's certificate is the one in the handshake line (a different trusted certificate is refused)" \
-       "$(try_curl --cacert "$WORK/stranger.pem" --cert "$WORK/client.pem" --key "$WORK/client.key" "$URL")" "no reply"
-expect "the name must be localhost (127.0.0.1 is refused)"   "$(try_curl --cacert "$WORK/server.pem" --cert "$WORK/client.pem" --key "$WORK/client.key" "https://127.0.0.1:$PORT/grpc.health.v1.Health/Check")" "no reply"
+if negatives; then
+  expect "provider's certificate is the one in the handshake line (a different trusted certificate is refused)" \
+         "$(try_curl --cacert "$WORK/stranger.pem" --cert "$WORK/client.pem" --key "$WORK/client.key" "$URL")" "no reply"
+  expect "the name must be localhost (127.0.0.1 is refused)"   "$(try_curl --cacert "$WORK/server.pem" --cert "$WORK/client.pem" --key "$WORK/client.key" "https://127.0.0.1:$PORT/grpc.health.v1.Health/Check")" "no reply"
+fi
 
 echo "== TLS versions (minimum 1.2)"
 expect "TLS 1.2 works"                                       "$(try_curl --tls-max 1.2 --cacert "$WORK/server.pem" --cert "$WORK/client.pem" --key "$WORK/client.key" "$URL")" 0
-expect "TLS 1.1 is refused"                                  "$(try_curl --tlsv1.0 --tls-max 1.1 --cacert "$WORK/server.pem" --cert "$WORK/client.pem" --key "$WORK/client.key" "$URL")" "no reply"
+if negatives; then
+  expect "TLS 1.1 is refused"                                  "$(try_curl --tlsv1.0 --tls-max 1.1 --cacert "$WORK/server.pem" --cert "$WORK/client.pem" --key "$WORK/client.key" "$URL")" "no reply"
+fi
 
 echo "== the certificate in the handshake line, compared with go-plugin's"
 TEXT=$(openssl x509 -in "$WORK/server.pem" -noout -text 2>&1)
@@ -67,8 +73,10 @@ done
 expect "field 6 never has '=' padding (looked at 10 certificates)" "$padded" 0
 start_provider
 expect "every start makes a new certificate"                 "$([ "$(cut -d'|' -f6 "$WORK/handshake")" != "$FIELD6" ] && echo yes || echo no)" yes
-OUT=$(timeout 1 env -i PATH="$PATH" TF_PLUGIN_MAGIC_COOKIE=$COOKIE PLUGIN_PROTOCOL_VERSIONS=5 PLUGIN_CLIENT_CERT=not-a-certificate "$PROVIDER" 2>"$WORK/err")
-expect "a client certificate that is not PEM: refused (exit 1, no handshake)" "$?|$OUT" "1|"
-# The provider would refuse anyway (gRPC cannot use such a certificate), but only our own check explains why.
-expect "  ... and the reason names PLUGIN_CLIENT_CERT" "$(grep -q PLUGIN_CLIENT_CERT "$WORK/err" && echo yes || echo no)" yes
+if negatives; then
+  OUT=$(timeout 1 env -i PATH="$PATH" TF_PLUGIN_MAGIC_COOKIE=$COOKIE PLUGIN_PROTOCOL_VERSIONS=5 PLUGIN_CLIENT_CERT=not-a-certificate "$PROVIDER" 2>"$WORK/err")
+  expect "a client certificate that is not PEM: refused (exit 1, no handshake)" "$?|$OUT" "1|"
+  # The provider would refuse anyway (gRPC cannot use such a certificate), but only our own check explains why.
+  expect "  ... and the reason names PLUGIN_CLIENT_CERT" "$(grep -q PLUGIN_CLIENT_CERT "$WORK/err" && echo yes || echo no)" yes
+fi
 summary

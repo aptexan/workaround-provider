@@ -3,8 +3,10 @@
 The normal checks in `tools/` (`check-startup.sh`, `check-health.sh`, `check-streams.sh`, `check-tofu.sh`) are meant to go red when the provider is wrong. A check that can never go red is worse than none, because it gives false confidence. `negative-check.sh` proves that they can.
 
 ```sh
-tools/negative-tests/negative-check.sh        # takes about 7 minutes
+tools/negative-tests/negative-check.sh        # takes about 25 minutes
 ```
+
+`tools/run-all.sh` runs this suite last by default, and `run-all.sh --skip-negative` leaves it out. The suite takes no options of its own, and it always makes the checks it tests run their negative cases (it sets `SKIP_NEGATIVE=0` for them), whatever your environment says.
 
 ## What it does
 
@@ -53,12 +55,16 @@ Each row is one break. The script's cases are written as `broken_provider <what>
 | certificate: no Certificate Sign usage | `check-tls.sh` |
 | certificate: `=` padding left in field 6 | `check-tls.sh` |
 | `CMakeLists.txt`: Windows `PATH` entries not removed | `check-build.sh` (skipped if `PATH` has no `/mnt` entries) |
+| enabled gets no default / a new name does not replace the resource / the summary is worded differently / size is not validated / the id is not what the settings say | `check-unit.sh` **and** `check-data.sh` (each of the five) |
+| an unknown is written as null / a set keeps its duplicates | `check-unit.sh` **and** `check-data.sh` |
+| an object may lack attributes | `check-unit.sh` |
+| the sensitive flag, `requires_replace` or a required flag is not sent; a diagnostic loses its attribute path; a warning is sent as an error; stored state is thrown away on upgrade | `check-data.sh` |
 | `CMakeLists.txt`: no standard-prefix fallback (a build without a prefix, or VS Code's configure after losing it, then fails) | `check-build.sh` |
 | `CMakeLists.txt`: packages from two installations accepted | `check-build.sh` (skipped if there is no second install with Protobuf) |
 
-Before any break, the unbroken copy must be green on every check in every mode (`check-build` on the copy, `check-startup`, `check-health` and `check-streams` in plaintext and in TLS, `check-tls`, `check-tofu` in both modes).
+Before any break, the unbroken copy must be green on every check in every mode (`check-build` on the copy, `check-unit`, `check-data`, `check-startup`, `check-health` and `check-streams` in plaintext and in TLS, `check-tls`, `check-tofu` in both modes).
 
-The `check-tofu.sh` cases are skipped (the script says `SKIP`) if `tofu` or `TOFU_DIR/tofu.tf` is missing. For those cases the script writes a private OpenTofu config pointing at the **copy**, via `TF_CLI_CONFIG_FILE`, so your `~/.tofurc` is not used and not changed. `check-tofu.sh` still deletes `terraform.tfstate*`, but in a private copy of your `*.tf` files, never in your real `TOFU_DIR`.
+The `check-tofu.sh` cases are skipped (the script says `SKIP`) if `tofu` or `TOFU_DIR/tofu.tf` is missing. For those cases the script writes a private OpenTofu config pointing at the **copy**, via `TF_CLI_CONFIG_FILE`, so your `~/.tofurc` is not used and not changed. The OpenTofu checks run the repository's `tools/tofu-test/` in a private copy, so nothing of yours is touched (any `TOFU_DIR` of your own is ignored here).
 
 ## Adding a break
 
@@ -73,6 +79,8 @@ The file is `src/tofu-plugin.cpp`, `src/server-cert.cpp` or `CMakeLists.txt`. Th
 Keep the replaced text on **one line**, and make the replacement still compile. Then run the script and see the new line go `PASS`.
 
 ## Options
+
+- `ONLY='regex'` runs only the breaks whose description matches, e.g. `ONLY='attribute path|duplicates' tools/negative-tests/negative-check.sh` (the unbroken baseline still runs first). For quick re-checks while changing this script or a check; the full run, without `ONLY`, is the proof.
 
 - The copy is built against the same gRPC as your real build: the script reads `CMAKE_PREFIX_PATH` from `build/CMakeCache.txt` (read-only). Set `CMAKE_PREFIX_PATH=...` to override. It must be a gRPC built against OpenSSL (see `BUILDING.md`).
 - It needs the `openssl` command, because `check-tls.sh` does.

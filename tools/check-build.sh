@@ -37,15 +37,17 @@ configure good -DCMAKE_PREFIX_PATH="$PREFIX"
 expect "a fresh configure with the prefix works"              "$([ -f "$WORK/good/Makefile" ] && echo yes || echo no)" yes
 expect "  ... and every dependency comes from that prefix"    "$(prefixes_of "$WORK/good/CMakeCache.txt")" "$PREFIX"
 
-# A prefix that has no gRPC at all: CMake then falls back to searching PATH, which under WSL holds the Windows install
-# directories. That search must not reach Windows. (With NO prefix the project uses its standard one, see below, so only
-# a given-but-wrong prefix reaches the PATH search.)
-mkdir "$WORK/empty-prefix"
-configure wrongprefix -DCMAKE_PREFIX_PATH="$WORK/empty-prefix"
-expect "with a prefix that lacks gRPC, no Windows package is ever used" "$(package_dirs "$WORK/wrongprefix/CMakeCache.txt" 2>/dev/null | grep -c ' /mnt/')" 0
+if negatives; then
+  # A prefix that has no gRPC at all: CMake then falls back to searching PATH, which under WSL holds the Windows install
+  # directories. That search must not reach Windows. (With NO prefix the project uses its standard one, see below, so only
+  # a given-but-wrong prefix reaches the PATH search.)
+  mkdir "$WORK/empty-prefix"
+  configure wrongprefix -DCMAKE_PREFIX_PATH="$WORK/empty-prefix"
+  expect "with a prefix that lacks gRPC, no Windows package is ever used" "$(package_dirs "$WORK/wrongprefix/CMakeCache.txt" 2>/dev/null | grep -c ' /mnt/')" 0
 
-configure noprefix
-expect "with no prefix at all, no Windows package is used either" "$(package_dirs "$WORK/noprefix/CMakeCache.txt" 2>/dev/null | grep -c ' /mnt/')" 0
+  configure noprefix
+  expect "with no prefix at all, no Windows package is used either" "$(package_dirs "$WORK/noprefix/CMakeCache.txt" 2>/dev/null | grep -c ' /mnt/')" 0
+fi
 
 # The order of configures must not matter. A configure from the command line records the compiler CMake chose (often
 # /usr/bin/cc); VS Code's CMake Tools then asks for /usr/bin/gcc, CMake sees a changed compiler, deletes the cache and
@@ -62,12 +64,14 @@ else
   echo "SKIP  command line then VS Code (gcc/g++ not found)"
 fi
 
-# Two installations on purpose: take Protobuf from ANOTHER prefix that has one (the BoringSSL gRPC, if it is installed).
-OTHER=$(ls -d "$HOME"/.local/grpc*/lib/cmake/protobuf 2>/dev/null | grep -v "^$PREFIX/" | head -1)
-if [ -n "$OTHER" ]; then
-  configure mixed -DCMAKE_PREFIX_PATH="$PREFIX" -DProtobuf_DIR="$OTHER"
-  expect "packages from two installations are refused"         "$(grep -q 'different installations' "$WORK/mixed.log" && echo yes || echo no)" yes
-else
-  echo "SKIP  packages from two installations are refused (no second install with Protobuf to try)"
+if negatives; then
+  # Two installations on purpose: take Protobuf from ANOTHER prefix that has one (the BoringSSL gRPC, if it is installed).
+  OTHER=$(ls -d "$HOME"/.local/grpc*/lib/cmake/protobuf 2>/dev/null | grep -v "^$PREFIX/" | head -1)
+  if [ -n "$OTHER" ]; then
+    configure mixed -DCMAKE_PREFIX_PATH="$PREFIX" -DProtobuf_DIR="$OTHER"
+    expect "packages from two installations are refused"         "$(grep -q 'different installations' "$WORK/mixed.log" && echo yes || echo no)" yes
+  else
+    echo "SKIP  packages from two installations are refused (no second install with Protobuf to try)"
+  fi
 fi
 summary

@@ -10,8 +10,9 @@
 #
 # Slow (one full build, then one rebuild per break: a few minutes) and separate from run-all.sh on purpose.
 # Needs: cmake, make, python3, and the same libraries as BUILDING.md (CMAKE_PREFIX_PATH, default ~/.local/grpc-openssl).
-# The check-tofu.sh cases are skipped if tofu or TOFU_DIR/tofu.tf is missing. See negative-tests/README.md.
+# The check-tofu.sh and check-data.sh cases are skipped if tofu is missing. See negative-tests/README.md.
 set -u
+[ $# -eq 0 ] || { echo "no options (this IS the negative test; ONLY='regex' picks which breaks to run)"; exit 2; }
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 TOOLS=$REPO/tools
 COPY=$(mktemp -d)
@@ -38,16 +39,17 @@ cmake -S "$COPY" -B "$COPY/build" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="
   || { echo "The copy did not build. See $COPY/cmake.log and make.log"; exit 2; }
 
 export PROVIDER=$COPY/build/terraform-provider-workaround       # every check script now tests the COPY
+export SKIP_NEGATIVE=0   # the checks under test must run their negative cases, whatever the caller's environment says
 . "$TOOLS/lib.sh"
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$WORK" "$COPY"' EXIT   # lib.sh set a trap too; this one also removes the copy
 
 # check-tofu.sh finds the provider through ~/.tofurc. Give it a private config that points at the COPY instead.
 printf 'provider_installation {\n  dev_overrides { "aptexan/workaround" = "%s/build" }\n  direct {}\n}\n' "$COPY" >"$COPY/tofurc"
 export TF_CLI_CONFIG_FILE=$COPY/tofurc
-# check-tofu.sh deletes terraform.tfstate* in its TOFU_DIR, so give it a private copy of your .tf files, not the real folder.
-REAL_TOFU_DIR=${TOFU_DIR:-$HOME/wpe}
-have_tofu() { command -v tofu >/dev/null && [ -f "$REAL_TOFU_DIR/tofu.tf" ]; }
-if have_tofu; then mkdir "$COPY/tofu-dir"; cp "$REAL_TOFU_DIR"/*.tf "$COPY/tofu-dir/"; export TOFU_DIR=$COPY/tofu-dir; fi
+# The OpenTofu checks run tools/tofu-test in a private copy (lib.sh does that), so nothing of yours is touched. A TOFU_DIR
+# of your own would be used instead, so make sure there is none.
+unset TOFU_DIR
+have_tofu() { command -v tofu >/dev/null; }
 
 # Runs a check quietly; says "green" if it passed, "red" if it failed. The check is "[VAR=value ...] script.sh".
 colour_of() {
@@ -57,11 +59,11 @@ colour_of() {
 
 echo "== first, with NO break, every check must be green (otherwise 'red' below would mean nothing)"
 CHECK_BUILD="BUILD_DIR=$COPY/build SOURCE_DIR=$COPY check-build.sh"     # the build checks look at the COPY
-for check in "$CHECK_BUILD" "check-startup.sh" "TLS=0 check-health.sh" "TLS=0 check-streams.sh" "check-tls.sh" "TLS=1 check-health.sh" "TLS=1 check-streams.sh"; do
+for check in "$CHECK_BUILD" "check-unit.sh" "check-startup.sh" "TLS=0 check-health.sh" "TLS=0 check-streams.sh" "check-tls.sh" "TLS=1 check-health.sh" "TLS=1 check-streams.sh"; do
   expect "unbroken copy: $check is green" "$(colour_of "$check")" green
 done
 if have_tofu; then
-  for check in "TLS=0 check-tofu.sh" "TLS=1 check-tofu.sh"; do
+  for check in "TLS=0 check-tofu.sh" "TLS=1 check-tofu.sh" "TLS=0 check-data.sh" "TLS=1 check-data.sh"; do
     expect "unbroken copy: $check is green" "$(colour_of "$check")" green
   done
 fi
@@ -69,7 +71,10 @@ fi
 # broken_provider <what we break> <check that must notice> <file, relative to the project> <exact text in it> <replacement>
 broken_provider() {
   local what=$1 check=$2 file=$3 old=$4 new=$5
-  if [[ $check == *check-tofu.sh ]] && ! have_tofu; then echo "SKIP  $what ($check needs tofu and a tofu.tf)"; return; fi
+  # ONLY='regex' runs just the breaks whose description matches (the unbroken baseline above still runs). For quick
+  # re-checks while working on this script; a full run, without ONLY, is the proof.
+  if [ -n "${ONLY:-}" ] && ! [[ $what =~ $ONLY ]]; then return; fi
+  if [[ $check == *check-tofu.sh || $check == *check-data.sh ]] && ! have_tofu; then echo "SKIP  $what ($check needs tofu)"; return; fi
   cp "$COPY/pristine-src/"* "$COPY/src/"                          # always start from the unmodified sources
   cp "$COPY/pristine-CMakeLists.txt" "$COPY/CMakeLists.txt"
   # The old text must occur exactly once. If someone edits the provider so it does not, this fails loudly.
@@ -107,6 +112,32 @@ broken_provider "certificate: wrong name"                    check-tls.sh       
 broken_provider "certificate: no client-auth usage"          check-tls.sh          src/server-cert.cpp '"serverAuth,clientAuth"' '"serverAuth"'
 broken_provider "certificate: no Certificate Sign usage"     check-tls.sh          src/server-cert.cpp '"digitalSignature,keyEncipherment,keyAgreement,keyCertSign"' '"digitalSignature,keyEncipherment,keyAgreement"'
 broken_provider "certificate: '=' padding left in field 6"   check-tls.sh          src/server-cert.cpp "while (!result.handshake_field.empty() && result.handshake_field.back() == '=') {" "while (false) {"
+
+echo "== break the data layer: the unit tests, and the real OpenTofu in check-data.sh, must notice"
+DATA="TLS=0 check-data.sh"
+EX=src/workaround-example.cpp
+broken_provider "enabled gets no default"                    check-unit.sh  $EX 'if (planned["enabled"].IsNull()) planned["enabled"] = Value::Bool(true);' 'if (false) planned["enabled"] = Value::Bool(true);'
+broken_provider "enabled gets no default"                    "$DATA"        $EX 'if (planned["enabled"].IsNull()) planned["enabled"] = Value::Bool(true);' 'if (false) planned["enabled"] = Value::Bool(true);'
+broken_provider "a new name does not replace the resource"   check-unit.sh  $EX 'result.requires_replace.push_back(AttributeAt("name"));' '(void)0;'
+broken_provider "a new name does not replace the resource"   "$DATA"        $EX 'result.requires_replace.push_back(AttributeAt("name"));' '(void)0;'
+broken_provider "the summary is worded differently"          check-unit.sh  $EX '", enabled=" +' '", on=" +'
+broken_provider "the summary is worded differently"          "$DATA"        $EX '", enabled=" +' '", on=" +'
+broken_provider "size is not validated"                      check-unit.sh  $EX 'bool valid = size.IsInteger() && size.AsInt64() >= 1 && size.AsInt64() <= 100;' 'bool valid = true;'
+broken_provider "size is not validated"                      "$DATA"        $EX 'bool valid = size.IsInteger() && size.AsInt64() >= 1 && size.AsInt64() <= 100;' 'bool valid = true;'
+broken_provider "the id is not what the settings say"        check-unit.sh  $EX 'Value::String(settings.id_prefix + "-" + id_suffix)' 'Value::String("fixed")'
+broken_provider "the id is not what the settings say"        "$DATA"        $EX 'Value::String(settings.id_prefix + "-" + id_suffix)' 'Value::String("fixed")'
+broken_provider "an unknown is written as null"               check-unit.sh  src/cty.cpp '*out = Json::binary(std::vector<std::uint8_t>{0x00}, 0);  // msgpack fixext1, type 0: d4 00 00' '*out = nullptr;'
+broken_provider "an unknown is written as null"               "$DATA"        src/cty.cpp '*out = Json::binary(std::vector<std::uint8_t>{0x00}, 0);  // msgpack fixext1, type 0: d4 00 00' '*out = nullptr;'
+broken_provider "a set keeps its duplicates"                 check-unit.sh  src/cty.cpp 'return a.IsKnown() && b.IsKnown() && Compare(a, b) == 0;' 'return false;'
+# (No check-data.sh case for duplicates in a set: OpenTofu removes them itself when it turns a list into a set, so a real
+# Core never sends any. Only the unit test, which does, can see this break.)
+broken_provider "an object may lack attributes"              check-unit.sh  src/cty.cpp 'if (!missing_attributes_are_null && tree.size() != type.attributes().size()) {' 'if (false) {'
+broken_provider "the sensitive flag is not sent"             "$DATA"        src/tofu-plugin.cpp 'proto_attribute->set_sensitive(attribute.sensitive);' '(void)0;'
+broken_provider "requires_replace is not sent"               "$DATA"        src/tofu-plugin.cpp 'SetPath(path, response->add_requires_replace());' '(void)path;'
+broken_provider "a diagnostic loses its attribute path"      "$DATA"        src/tofu-plugin.cpp 'if (!diagnostic.attribute.empty()) SetPath(diagnostic.attribute, proto->mutable_attribute());' '(void)0;'
+broken_provider "a warning is sent as an error"              "$DATA"        src/tofu-plugin.cpp ': tfplugin5::Diagnostic::WARNING);' ': tfplugin5::Diagnostic::ERROR);'
+broken_provider "stored state is thrown away on upgrade"     "$DATA"        src/tofu-plugin.cpp 'Encode(*state, *type, "the upgraded state"' 'Encode(cty::Value::Null(), *type, "the upgraded state"'
+broken_provider "the schema loses a required flag"           "$DATA"        src/tofu-plugin.cpp 'proto_attribute->set_required(attribute.required);' '(void)0;'
 
 echo "== break the build protections in CMakeLists.txt: check-build.sh must notice"
 # These two need something to be wrong with: a Windows PATH, and a second gRPC install. SKIP when the machine has neither.
