@@ -124,6 +124,65 @@ Check: `./build/terraform-provider-workaround --debug --port=0` prints a handsha
 Protobuf/gRPC sources are generated into `build/` automatically.
 If the configure or build fails, see the troubleshooting list in `BUILDING.md`.
 
+### 6.1 Run OpenTofu by hand, with and without TLS
+
+This is for trying your own `.tf` files from the command line. (The scripts in `tools/` do all of it themselves; this is separate from them.)
+
+**Once**, tell OpenTofu where the provider is. Put this in `~/.tofurc` (merge it with yours), with the absolute path of this repo's `build` folder:
+
+```hcl
+provider_installation {
+  dev_overrides {
+    "aptexan/workaround" = "/absolute/path/to/workaround-provider/build"
+  }
+  direct {}
+}
+```
+
+Do not run `tofu init`; it is not needed with `dev_overrides`. OpenTofu warns `Provider development overrides are in effect`, which is normal.
+
+**A configuration to start from**, in any folder (for example `main.tf`). The `required_providers` block is needed: without it OpenTofu looks for a different provider and fails with `Inconsistent dependency lock file`. `name` is required:
+
+```hcl
+terraform {
+  required_providers {
+    workaround = {
+      source = "aptexan/workaround"
+    }
+  }
+}
+
+resource "workaround_example" "example" {
+  name = "example"
+}
+```
+
+The other attributes are optional; they are listed at the top of `src/workaround-example.h`.
+
+**Run it**, from that folder, encrypted or in plaintext:
+
+```sh
+# Encrypted (mutual TLS): how OpenTofu normally talks to a provider
+unset TF_DISABLE_PLUGIN_TLS
+tofu plan
+tofu apply -auto-approve
+tofu destroy -auto-approve
+
+# Plaintext: no certificates, easier to debug
+export TF_DISABLE_PLUGIN_TLS=1
+tofu plan
+tofu apply -auto-approve
+tofu destroy -auto-approve
+```
+
+For a single command, set it just for that command: `TF_DISABLE_PLUGIN_TLS=1 tofu plan`.
+
+- **The variable is read by OpenTofu, not by the provider.** Any **non-empty** value turns TLS off, **including `0`**. Unset or empty leaves TLS on. If you run the commands in a shell where it was exported earlier, it is still set: check with `echo "[$TF_DISABLE_PLUGIN_TLS]"`.
+- **Which mode ran?** `TF_LOG=DEBUG tofu plan 2>&1 | grep -E 'mutual TLS|plaintext'` shows `Server listening on ... (pid N, mutual TLS)` or `(pid N, plaintext)`.
+- **Both modes must give the same results.** If a command works in plaintext and fails with TLS, that is a provider bug worth reporting.
+- **After changing the provider's code**, rebuild it (step 6) before running `tofu` again.
+- `Error: Missing required argument ... The argument "name" is required` means the resource has no `name`. It has nothing to do with TLS.
+
 ## 7. VSCode extensions
 
 Open the folder: `code workaround-provider`. Then install:
