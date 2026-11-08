@@ -75,12 +75,15 @@ std::optional<ServerCertificate> GenerateServerCertificate(std::string* error) {
 
   // Self-signed: subject and issuer are the same name.
   // (go-plugin uses CN=localhost and O=HashiCorp; the organization has no effect on verification, so it is our own.)
-  X509_NAME* name = X509_get_subject_name(cert.get());
-  if (X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>("localhost"),
+  // The name is built on its own and copied in: OpenSSL 4 returns the certificate's own subject name as const.
+  Owned<X509_NAME, X509_NAME_free> name(X509_NAME_new());
+  if (!name ||
+      X509_NAME_add_entry_by_txt(name.get(), "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>("localhost"),
                                  -1, -1, 0) != 1 ||
-      X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+      X509_NAME_add_entry_by_txt(name.get(), "O", MBSTRING_ASC,
                                  reinterpret_cast<const unsigned char*>("workaround-provider"), -1, -1, 0) != 1 ||
-      X509_set_issuer_name(cert.get(), name) != 1 || X509_set_pubkey(cert.get(), key.get()) != 1) {
+      X509_set_subject_name(cert.get(), name.get()) != 1 || X509_set_issuer_name(cert.get(), name.get()) != 1 ||
+      X509_set_pubkey(cert.get(), key.get()) != 1) {
     return fail("name and public key");
   }
 
