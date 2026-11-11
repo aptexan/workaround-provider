@@ -21,6 +21,9 @@ cmake_minimum_required(VERSION 3.22)
 
 project(tofu-plugin-cpp C CXX)
 
+# Always write build/compile_commands.json (clangd / IntelliSense read it), regardless of how cmake is invoked.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Write compile_commands.json" FORCE)
+
 # --- Never search the Windows side of WSL ------------------------------------------------------------------------------
 # Under WSL the Windows PATH is inherited (Anaconda, Visual Studio, ...) and CMake treats every PATH entry as a place to
 # look for packages. It can then find a Windows Protobuf or Abseil and mix it with the Linux gRPC, which ends in hundreds
