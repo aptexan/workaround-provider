@@ -113,8 +113,8 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# OpenTofu provider protocol (tfplugin5)
-get_filename_component(proto_abs_path "proto/tfplugin5.proto" ABSOLUTE)
+# OpenTofu provider protocol (tfplugin6)
+get_filename_component(proto_abs_path "proto/tfplugin6.proto" ABSOLUTE)
 get_filename_component(proto_path "${proto_abs_path}" PATH)
 get_filename_component(proto_stem "${proto_abs_path}" NAME_WE)
 

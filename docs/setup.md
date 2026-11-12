@@ -120,7 +120,7 @@ cmake -S . -B build \
 cmake --build build --parallel 4
 ```
 Output: `build/terraform-provider-workaround`.
-Check: `./build/terraform-provider-workaround --debug --port=0` prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|` (`--debug` is needed because the provider refuses to start by hand without OpenTofu's magic cookie). Stop with `Ctrl+C`.
+Check: `./build/terraform-provider-workaround --debug --port=0` prints a handshake like `1|6|tcp|127.0.0.1:<port>|grpc|` (`--debug` is needed because the provider refuses to start by hand without OpenTofu's magic cookie). Stop with `Ctrl+C`.
 Protobuf/gRPC sources are generated into `build/` automatically.
 If the configure or build fails, see the troubleshooting list in `BUILDING.md`.
 
@@ -210,7 +210,7 @@ If missing, add these to the workspace `settings.json`.
 
 1. Complete step 6 first, with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` (it creates `build/compile_commands.json`; the build creates the generated `*.pb.h` / `*.grpc.pb.h`).
 2. `Ctrl+Shift+P` (`Cmd+Shift+P` on macOS) → **clangd: Restart language server**.
-3. Open `src/tofu-plugin.cpp` and a generated file in `build/` (e.g. `tfplugin5.pb.h`). No squiggles should appear.
+3. Open `src/tofu-plugin.cpp` and a generated file in `build/` (e.g. `tfplugin6.pb.h`). No squiggles should appear.
 4. If includes or symbols are unresolved: rerun step 6 configure, then restart clangd again.
    If something remains, run the `vscode-clangd-setup` skill in Claude Code.
 

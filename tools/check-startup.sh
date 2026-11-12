@@ -16,27 +16,27 @@ GOOD="TF_PLUGIN_MAGIC_COOKIE=$COOKIE"                         # what Core always
 refused() { echo "$STATUS|$LINE"; }                           # a refusal is: exit status 1 and no handshake line
 
 echo "== magic cookie"
-run $GOOD PLUGIN_PROTOCOL_VERSIONS=5;                   expect "right cookie: starts"    "$STATUS" $RUNNING
-expect "handshake line looks like 1|5|tcp|127.0.0.1:PORT|grpc|" "$(echo "$LINE" | sed 's/:[0-9]*|grpc|$/:PORT|grpc|/')" "1|5|tcp|127.0.0.1:PORT|grpc|"
-ARGS=--debug run PLUGIN_PROTOCOL_VERSIONS=5;            expect "--debug, no cookie: starts" "$STATUS" $RUNNING
+run $GOOD PLUGIN_PROTOCOL_VERSIONS=6;                   expect "right cookie: starts"    "$STATUS" $RUNNING
+expect "handshake line looks like 1|6|tcp|127.0.0.1:PORT|grpc|" "$(echo "$LINE" | sed 's/:[0-9]*|grpc|$/:PORT|grpc|/')" "1|6|tcp|127.0.0.1:PORT|grpc|"
+ARGS=--debug run PLUGIN_PROTOCOL_VERSIONS=6;            expect "--debug, no cookie: starts" "$STATUS" $RUNNING
 if negatives; then
-  run PLUGIN_PROTOCOL_VERSIONS=5;                       expect "no cookie: refused"      "$(refused)" "1|"
-  run TF_PLUGIN_MAGIC_COOKIE=nope PLUGIN_PROTOCOL_VERSIONS=5; expect "wrong cookie: refused" "$(refused)" "1|"
+  run PLUGIN_PROTOCOL_VERSIONS=6;                       expect "no cookie: refused"      "$(refused)" "1|"
+  run TF_PLUGIN_MAGIC_COOKIE=nope PLUGIN_PROTOCOL_VERSIONS=6; expect "wrong cookie: refused" "$(refused)" "1|"
 fi
 
-echo "== protocol version (we serve only 5)"
-for offer in 5,6 6,5 abc,5; do
-  run $GOOD PLUGIN_PROTOCOL_VERSIONS=$offer;            expect "Core offers $offer: we answer 5" "$(version_of)" 5
+echo "== protocol version (we serve only 6)"
+for offer in 6 5,6 6,5 abc,6; do
+  run $GOOD PLUGIN_PROTOCOL_VERSIONS=$offer;            expect "Core offers $offer: we answer 6" "$(version_of)" 6
 done
 if negatives; then
-  run $GOOD PLUGIN_PROTOCOL_VERSIONS=6;                 expect "Core offers only 6: refused"   "$(refused)" "1|"
+  run $GOOD PLUGIN_PROTOCOL_VERSIONS=5;                 expect "Core offers only 5: refused"   "$(refused)" "1|"
   run $GOOD PLUGIN_PROTOCOL_VERSIONS=4;                 expect "Core offers only 4: refused"   "$(refused)" "1|"
   run $GOOD PLUGIN_PROTOCOL_VERSIONS=abc;               expect "Core offers junk: refused"     "$(refused)" "1|"
   run $GOOD;                                            expect "Core offers nothing: refused"  "$(refused)" "1|"
 fi
 
 echo "== port range (PLUGIN_MIN_PORT .. PLUGIN_MAX_PORT)"
-OK="$GOOD PLUGIN_PROTOCOL_VERSIONS=5"
+OK="$GOOD PLUGIN_PROTOCOL_VERSIONS=6"
 run $OK PLUGIN_MIN_PORT=34567 PLUGIN_MAX_PORT=34567;    expect "range of one port: uses it"    "$(port_of)" 34567
 run $OK;                                                expect "no range: starts anywhere"     "$STATUS" $RUNNING
 ARGS=--port=34580 run $OK;                              expect "--port=34580: uses it"         "$(port_of)" 34580

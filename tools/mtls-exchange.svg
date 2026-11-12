@@ -34,7 +34,7 @@
 
 <!-- 4 -->
 <line x1="730" y1="340" x2="170" y2="340" stroke="#1f7a4d" stroke-width="2" marker-end="url(#g)"/>
-<text x="450" y="328" font-size="12" text-anchor="middle">4. the one line on stdout:  1|5|tcp|127.0.0.1:PORT|grpc|&lt;provider cert, base64 DER, no '='&gt;</text>
+<text x="450" y="328" font-size="12" text-anchor="middle">4. the one line on stdout:  1|6|tcp|127.0.0.1:PORT|grpc|&lt;provider cert, base64 DER, no '='&gt;</text>
 <text x="450" y="358" font-size="11" fill="#475569" text-anchor="middle">only after the server is listening</text>
 
 <!-- 5 -->

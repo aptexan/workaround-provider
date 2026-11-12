@@ -16,7 +16,7 @@ still_running() { kill -0 "$1" 2>/dev/null && echo yes || echo no; }
 
 expect "stdio stream still open after 1 s"   "$(still_running $STDIO)" yes
 expect "broker stream still open after 1 s"  "$(still_running $BROKER)" yes
-expect "GetSchema works meanwhile"           "$(printf "$NO_FIELDS" | grpc_call /tfplugin5.Provider/GetSchema)" 0
+expect "GetProviderSchema works meanwhile"   "$(printf "$NO_FIELDS" | grpc_call /tfplugin6.Provider/GetProviderSchema)" 0
 
 # Shutdown is what Core calls when it is done. With both streams open, the provider must still exit almost at once.
 # (If it did not cancel the streams itself, the server would wait about 1 s for them.)

@@ -39,7 +39,7 @@ Each row is one break. The script's cases are written as `broken_provider <what>
 | stdio service not registered | `check-streams.sh` |
 | `Shutdown` service not registered | `check-streams.sh` and `check-tofu.sh` |
 | cookie check disabled | `check-startup.sh` |
-| protocol version always 5 | `check-startup.sh` |
+| protocol version always 6 (a Core that offers only 5 is accepted) | `check-startup.sh` |
 | port range ignored | `check-startup.sh` |
 | handshake line missing the `\|` before the certificate field | `check-startup.sh` |
 | a log line written to stdout | `check-startup.sh` |

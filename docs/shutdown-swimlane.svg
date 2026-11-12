@@ -52,7 +52,7 @@
     <line x1="340" y1="215" x2="122" y2="215"/>
   </g>
   <text x="230" y="199" text-anchor="middle" fill="#0f172a">③ stdout handshake line</text>
-  <text x="230" y="232" text-anchor="middle" font-size="10" fill="#475569">1|5|tcp|127.0.0.1:PORT|grpc|</text>
+  <text x="230" y="232" text-anchor="middle" font-size="10" fill="#475569">1|6|tcp|127.0.0.1:PORT|grpc|</text>
 
   <!-- 4 wait -->
   <rect x="250" y="250" width="180" height="34" rx="4" fill="#dcfce7" stroke="#16a34a"/>
@@ -62,7 +62,7 @@
   <g stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#a)">
     <line x1="120" y1="320" x2="558" y2="320"/>
   </g>
-  <text x="340" y="312" text-anchor="middle" fill="#0f172a">⑤ dial PORT, then tfplugin5.Provider RPCs</text>
+  <text x="340" y="312" text-anchor="middle" fill="#0f172a">⑤ dial PORT, then tfplugin6.Provider RPCs</text>
   <text x="340" y="336" text-anchor="middle" font-size="10" fill="#475569">GetSchema, Configure, Plan/ApplyResourceChange…</text>
   <rect x="470" y="345" width="180" height="26" rx="4" fill="#fef9c3" stroke="#ca8a04"/>
   <text x="560" y="362" text-anchor="middle" fill="#0f172a">handlers fill responses</text>

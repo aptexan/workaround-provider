@@ -1,13 +1,13 @@
 // Copyright IBM Corp. 2014, 2026
 // SPDX-License-Identifier: MPL-2.0
 
-// Terraform Plugin RPC protocol version 5.10
+// Terraform Plugin RPC protocol version 6.10
 //
-// This file defines version 5.10 of the RPC protocol. To implement a plugin
+// This file defines version 6.10 of the RPC protocol. To implement a plugin
 // against this protocol, copy this definition into your own codebase and
 // use protoc to generate stubs for your target language.
 //
-// Any minor versions of protocol 5 to follow should modify this file while
+// Any minor versions of protocol 6 to follow should modify this file while
 // maintaining backwards compatibility. Breaking changes, if any are required,
 // will come in a subsequent major version with its own separate proto definition.
 //
@@ -19,11 +19,11 @@
 // branch or any other development branch.
 //
 syntax = "proto3";
-option go_package = "github.com/opentofu/opentofu/internal/tfplugin5";
+option go_package = "github.com/opentofu/opentofu/internal/tfplugin6";
 
 import "google/protobuf/timestamp.proto";
 
-package tfplugin5;
+package tfplugin6;
 
 // DynamicValue is an opaque encoding of terraform data, with the field name
 // indicating the encoding scheme used.
@@ -66,7 +66,7 @@ message AttributePath {
     repeated Step steps = 1;
 }
 
-message Stop {
+message StopProvider {
     message Request {
     }
     message Response {
@@ -149,7 +149,7 @@ message ActionSchema {
     Schema schema = 1; // of the action itself
 }
 
-// Schema is the configuration schema for a Resource, Provider, or Provisioner.
+// Schema is the configuration schema for a Resource or Provider.
 message Schema {
     message Block {
         int64 version = 1;
@@ -164,6 +164,7 @@ message Schema {
     message Attribute {
         string name = 1;
         bytes type = 2;
+        Object nested_type = 10;
         string description = 3;
         bool required = 4;
         bool optional = 5;
@@ -171,8 +172,8 @@ message Schema {
         bool sensitive = 7;
         StringKind description_kind = 8;
         bool deprecated = 9;
-        bool write_only = 10;
-        string deprecation_message = 11;
+        bool write_only = 11;
+        string deprecation_message = 12;
     }
 
     message NestedBlock {
@@ -190,6 +191,24 @@ message Schema {
         NestingMode nesting = 3;
         int64 min_items = 4;
         int64 max_items = 5;
+    }
+
+    message Object {
+        enum NestingMode {
+            INVALID = 0;
+            SINGLE = 1;
+            LIST = 2;
+            SET = 3;
+            MAP = 4;
+        }
+
+        repeated Attribute attributes = 1;
+        NestingMode nesting = 3;
+
+        // MinItems and MaxItems were never used in the protocol, and have no
+        // effect on validation.
+        int64 min_items = 4 [ deprecated = true ];
+        int64 max_items = 5 [ deprecated = true ];
     }
 
     // The version of the schema.
@@ -328,10 +347,10 @@ service Provider {
 
     // GetSchema returns schema information for the provider, data resources,
     // and managed resources.
-    rpc GetSchema(GetProviderSchema.Request) returns (GetProviderSchema.Response);
-    rpc PrepareProviderConfig(PrepareProviderConfig.Request) returns (PrepareProviderConfig.Response);
-    rpc ValidateResourceTypeConfig(ValidateResourceTypeConfig.Request) returns (ValidateResourceTypeConfig.Response);
-    rpc ValidateDataSourceConfig(ValidateDataSourceConfig.Request) returns (ValidateDataSourceConfig.Response);
+    rpc GetProviderSchema(GetProviderSchema.Request) returns (GetProviderSchema.Response);
+    rpc ValidateProviderConfig(ValidateProviderConfig.Request) returns (ValidateProviderConfig.Response);
+    rpc ValidateResourceConfig(ValidateResourceConfig.Request) returns (ValidateResourceConfig.Response);
+    rpc ValidateDataResourceConfig(ValidateDataResourceConfig.Request) returns (ValidateDataResourceConfig.Response);
     rpc UpgradeResourceState(UpgradeResourceState.Request) returns (UpgradeResourceState.Response);
 
     // GetResourceIdentitySchemas returns the identity schemas for all managed
@@ -342,7 +361,7 @@ service Provider {
     rpc UpgradeResourceIdentity(UpgradeResourceIdentity.Request) returns (UpgradeResourceIdentity.Response);
 
     //////// One-time initialization, called before other functions below
-    rpc Configure(Configure.Request) returns (Configure.Response);
+    rpc ConfigureProvider(ConfigureProvider.Request) returns (ConfigureProvider.Response);
 
     //////// Managed Resource Lifecycle
     rpc ReadResource(ReadResource.Request) returns (ReadResource.Response);
@@ -369,13 +388,33 @@ service Provider {
     //////// Provider-contributed Functions
     rpc CallFunction(CallFunction.Request) returns (CallFunction.Response);
 
+    // ValidateStateStoreConfig performs configuration validation
+    rpc ValidateStateStoreConfig(ValidateStateStore.Request) returns (ValidateStateStore.Response);
+    // ConfigureStateStore configures the state store, such as S3 connection in the context of already configured provider
+    rpc ConfigureStateStore(ConfigureStateStore.Request) returns (ConfigureStateStore.Response);
+
+    // ReadStateBytes streams byte chunks of a given state file from a state store
+    rpc ReadStateBytes(ReadStateBytes.Request) returns (stream ReadStateBytes.Response);
+    // WriteStateBytes streams byte chunks of a given state file into a state store
+    rpc WriteStateBytes(stream WriteStateBytes.RequestChunk) returns (WriteStateBytes.Response);
+
+    // LockState locks a given state (i.e. CE workspace)
+    rpc LockState(LockState.Request) returns (LockState.Response);
+    // UnlockState unlocks a given state (i.e. CE workspace)
+    rpc UnlockState(UnlockState.Request) returns (UnlockState.Response);
+
+    // GetStates returns a list of all states (i.e. CE workspaces) managed by a given state store
+    rpc GetStates(GetStates.Request) returns (GetStates.Response);
+    // DeleteState instructs a given state store to delete a specific state (i.e. a CE workspace)
+    rpc DeleteState(DeleteState.Request) returns (DeleteState.Response);
+
     //////// Actions
     rpc PlanAction(PlanAction.Request) returns (PlanAction.Response);
     rpc InvokeAction(InvokeAction.Request) returns (stream InvokeAction.Event);
     rpc ValidateActionConfig(ValidateActionConfig.Request) returns (ValidateActionConfig.Response);
 
     //////// Graceful Shutdown
-    rpc Stop(Stop.Request) returns (Stop.Response);
+    rpc StopProvider(StopProvider.Request) returns (StopProvider.Response);
 }
 
 message GetMetadata {
@@ -391,7 +430,8 @@ message GetMetadata {
         repeated FunctionMetadata functions = 5;
         repeated EphemeralMetadata ephemeral_resources = 6;
         repeated ListResourceMetadata list_resources = 7;
-        repeated ActionMetadata actions = 8;
+        repeated StateStoreMetadata state_stores = 8;
+        repeated ActionMetadata actions = 9;
     }
 
     message EphemeralMetadata {
@@ -414,6 +454,10 @@ message GetMetadata {
     message ListResourceMetadata {
         string type_name = 1;
     }
+
+    message StateStoreMetadata {
+        string type_name = 1;
+    }
     
     message ActionMetadata {
         string type_name = 1;
@@ -430,7 +474,7 @@ message GetProviderSchema {
         map<string, Function> functions = 7;
         map<string, Schema> ephemeral_resource_schemas = 8;
         map<string, Schema> list_resource_schemas = 9;
-        reserved 10; // Field number 10 is used by state stores in version 6
+        map<string, Schema> state_store_schemas = 10;
         map<string, ActionSchema> action_schemas = 11;
         repeated Diagnostic diagnostics = 4;
         Schema provider_meta = 5;
@@ -438,12 +482,11 @@ message GetProviderSchema {
     }
 }
 
-message PrepareProviderConfig {
+message ValidateProviderConfig {
     message Request {
         DynamicValue config = 1;
     }
     message Response {
-        DynamicValue prepared_config = 1;
         repeated Diagnostic diagnostics = 2;
     }
 }
@@ -521,7 +564,7 @@ message UpgradeResourceIdentity {
     }
 }
 
-message ValidateResourceTypeConfig {
+message ValidateResourceConfig {
     message Request {
         string type_name = 1;
         DynamicValue config = 2;
@@ -532,7 +575,7 @@ message ValidateResourceTypeConfig {
     }
 }
 
-message ValidateDataSourceConfig {
+message ValidateDataResourceConfig {
     message Request {
         string type_name = 1;
         DynamicValue config = 2;
@@ -552,7 +595,7 @@ message ValidateEphemeralResourceConfig {
     }
 }
 
-message Configure {
+message ConfigureProvider {
     message Request {
         string terraform_version = 1;
         DynamicValue config = 2;
@@ -762,42 +805,6 @@ message ReadDataSource {
     }
 }
 
-service Provisioner {
-    rpc GetSchema(GetProvisionerSchema.Request) returns (GetProvisionerSchema.Response);
-    rpc ValidateProvisionerConfig(ValidateProvisionerConfig.Request) returns (ValidateProvisionerConfig.Response);
-    rpc ProvisionResource(ProvisionResource.Request) returns (stream ProvisionResource.Response);
-    rpc Stop(Stop.Request) returns (Stop.Response);
-}
-
-message GetProvisionerSchema {
-    message Request {
-    }
-    message Response {
-        Schema provisioner = 1;
-        repeated Diagnostic diagnostics = 2;
-    }
-}
-
-message ValidateProvisionerConfig {
-    message Request {
-        DynamicValue config = 1;
-    }
-    message Response {
-        repeated Diagnostic diagnostics = 1;
-    }
-}
-
-message ProvisionResource {
-    message Request {
-        DynamicValue config = 1;
-        DynamicValue connection = 2;
-    }
-    message Response {
-        string output = 1;
-        repeated Diagnostic diagnostics = 2;
-    }
-}
-
 message OpenEphemeralResource {
     message Request {
         string type_name = 1;
@@ -902,6 +909,123 @@ message ValidateListResourceConfig {
     }
 }
 
+message ValidateStateStore {
+    message Request {
+        string type_name = 1;
+        DynamicValue config = 2;
+    }
+    message Response {
+        repeated Diagnostic diagnostics = 1;
+    }
+}
+
+message ConfigureStateStore {
+    message Request {
+        string type_name = 1;
+        DynamicValue config = 2;
+        StateStoreClientCapabilities capabilities = 3;
+    }
+    message Response {
+        repeated Diagnostic diagnostics = 1;
+        StateStoreServerCapabilities capabilities = 2;
+    }
+}
+
+message StateStoreClientCapabilities {
+    int64 chunk_size = 1; // suggested chunk size by Core
+}
+
+message StateStoreServerCapabilities {
+    int64 chunk_size = 1; // chosen chunk size by plugin
+}
+
+message ReadStateBytes {
+    message Request {
+        string type_name = 1;
+        string state_id = 2;
+    }
+    message Response {
+        bytes bytes = 1;
+        // total_length is the overall size of all of the state byte chunks that will be received
+        int64 total_length = 2;
+        StateRange range = 3;
+        repeated Diagnostic diagnostics = 4;
+    }
+}
+
+message WriteStateBytes {
+    message RequestChunk {
+        // meta is sent with the first chunk only
+        optional RequestChunkMeta meta = 1;
+
+        bytes bytes = 2;
+        // total_length is the overall size of all of the state byte chunks that will be sent.
+        int64 total_length = 3;
+        StateRange range = 4;
+    }
+    message Response {
+        repeated Diagnostic diagnostics = 1;
+    }
+}
+
+message RequestChunkMeta {
+    string type_name = 1;
+    string state_id = 2;
+}
+
+message StateRange {
+    // start is the starting byte index for a chunk of state byte data.
+    // This index is in relation to the entire byte array that will be sent or received.
+    int64 start = 1;
+    // end is the ending byte index for a chunk of state byte data.
+    // This index is in relation to the entire byte array that will be sent or received.
+    int64 end = 2;
+}
+
+message LockState {
+    message Request {
+        string type_name = 1;
+        string state_id = 2;
+        // operation represents an ongoing operation due to which lock is held (e.g. refresh, plan, apply)
+        string operation = 3;
+    }
+    message Response {
+        string lock_id = 1;
+        repeated Diagnostic diagnostics = 2;
+    }
+}
+
+message UnlockState {
+    message Request {
+        string type_name = 1;
+        string state_id = 2;
+        string lock_id = 3;
+    }
+    message Response {
+        repeated Diagnostic diagnostics = 1;
+    }
+}
+
+message GetStates {
+	message Request {
+		string type_name = 1;
+    }
+    message Response {
+        repeated string state_id = 1;
+        repeated Diagnostic diagnostics = 2;
+    }
+}
+
+message DeleteState {
+	message Request {
+		string type_name = 1;
+		string state_id = 2;
+    }
+	message Response {
+        repeated Diagnostic diagnostics = 1;
+    }
+}
+
 message PlanAction {
     message Request {
         string action_type = 1;
@@ -932,6 +1056,7 @@ message InvokeAction {
         // message to be printed in the console / HCPT
         string message = 1;
       }
+
       message Completed {
         repeated Diagnostic diagnostics = 1;
     }

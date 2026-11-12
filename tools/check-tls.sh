@@ -74,7 +74,7 @@ expect "field 6 never has '=' padding (looked at 10 certificates)" "$padded" 0
 start_provider
 expect "every start makes a new certificate"                 "$([ "$(cut -d'|' -f6 "$WORK/handshake")" != "$FIELD6" ] && echo yes || echo no)" yes
 if negatives; then
-  OUT=$(timeout 1 env -i PATH="$PATH" TF_PLUGIN_MAGIC_COOKIE=$COOKIE PLUGIN_PROTOCOL_VERSIONS=5 PLUGIN_CLIENT_CERT=not-a-certificate "$PROVIDER" 2>"$WORK/err")
+  OUT=$(timeout 1 env -i PATH="$PATH" TF_PLUGIN_MAGIC_COOKIE=$COOKIE PLUGIN_PROTOCOL_VERSIONS=6 PLUGIN_CLIENT_CERT=not-a-certificate "$PROVIDER" 2>"$WORK/err")
   expect "a client certificate that is not PEM: refused (exit 1, no handshake)" "$?|$OUT" "1|"
   # The provider would refuse anyway (gRPC cannot use such a certificate), but only our own check explains why.
   expect "  ... and the reason names PLUGIN_CLIENT_CERT" "$(grep -q PLUGIN_CLIENT_CERT "$WORK/err" && echo yes || echo no)" yes

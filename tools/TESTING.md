@@ -15,7 +15,7 @@ tools/run-all.sh --skip-negative    # the quick run: about 30 seconds
 
 **Negative tests run by default.** They come in two forms: the *negative checks* inside each script (the provider must refuse a missing cookie, an unwanted client, a bad configuration: see section 3), and the *negative suite* (`negative-tests/negative-check.sh`), which breaks a copy of the provider on purpose and requires the checks to notice. `--skip-negative` (or `SKIP_NEGATIVE=1`) leaves out both. Every `check-*.sh` takes the same option and then runs only its positive checks; it is the only option they take. The long suite needs VS Code closed and this project left alone while it runs.
 
-That runs the checks below, **once in plaintext and once with mutual TLS** where that makes sense (447 checks, 359 with `--skip-negative`), and ends with `ALL CHECKS PASSED` (or `SOME CHECKS FAILED`, with exit status 1). `check-tofu.sh` needs OpenTofu set up first (section 4); without it `run-all.sh` says `SKIPPED` for that one and runs the rest.
+That runs the checks below, **once in plaintext and once with mutual TLS** where that makes sense (448 checks, 360 with `--skip-negative`), and ends with `ALL CHECKS PASSED` (or `SOME CHECKS FAILED`, with exit status 1). `check-tofu.sh` needs OpenTofu set up first (section 4); without it `run-all.sh` says `SKIPPED` for that one and runs the rest.
 
 You need: `bash`, `curl` with HTTP/2 support (`curl --version` should list `HTTP2`), `openssl` (the command line tool, to make test certificates), `python3` (only to occupy a port in `check-startup.sh`), and, for `check-tofu.sh`, `tofu` on your `PATH`. The provider itself must have been built against gRPC with **OpenSSL** (see `BUILDING.md`); otherwise it does not compile.
 
@@ -36,14 +36,14 @@ Providers are normally written in Go with a library called **go-plugin**. Ours i
    | Variable | Meaning |
    | --- | --- |
    | `TF_PLUGIN_MAGIC_COOKIE` | a fixed, public string; shows the program was started by a plugin host and not by a person |
-   | `PLUGIN_PROTOCOL_VERSIONS` | which provider protocol versions Core understands, for example `5,6` |
+   | `PLUGIN_PROTOCOL_VERSIONS` | which provider protocol versions Core understands, for example `5,6` (we serve only 6, see below) |
    | `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT` | the TCP ports the plugin may listen on |
    | `PLUGIN_CLIENT_CERT` | only when encryption (mutual TLS) is on; not supported yet |
 
 2. The provider checks them, starts a gRPC server on a local port, and prints **exactly one line on standard output**, the handshake line:
 
    ```
-   1|5|tcp|127.0.0.1:12345|grpc|
+   1|6|tcp|127.0.0.1:12345|grpc|
    ```
 
    The fields: go-plugin protocol (always `1`), the provider protocol version we chose, network type, address, `grpc`, and an (empty, for now) certificate.
@@ -76,20 +76,20 @@ There is no gRPC client library here. A gRPC call is an HTTP/2 POST whose body i
 | --- | --- | --- | --- | --- |
 | `check-unit.sh` | no | 169 | the Terraform value model and its msgpack/JSON encodings, and the resource rules (validate, plan, apply), as plain C++ unit tests | under 1 s |
 | `check-build.sh` | no | 10 | the build itself is sound: `build/` uses one installation and no Windows packages, `cmake --build` works, and a fresh configure never uses Windows packages and refuses mixed installations | about 25 s |
-| `check-startup.sh` | no | 19 | the provider validates what Core tells it, and refuses bad input without printing a handshake | about 13 s |
+| `check-startup.sh` | no | 20 | the provider validates what Core tells it, and refuses bad input without printing a handshake | about 13 s |
 | `check-health.sh` | no | 7 | the health service answers for `plugin`; other calls behave | under 1 s |
 | `check-streams.sh` | no | 6 | the stdio and broker streams stay open, don't block other calls, and are cancelled on shutdown | about 1.5 s |
 | `check-tls.sh` | no | 25 | mutual TLS: only Core's certificate is accepted, and the provider's certificate has go-plugin's properties | under 1 s |
 | `check-tofu.sh` | yes | 19 | the real Core runs plan, apply and destroy against the provider with no errors or warnings | under 1 s |
 | `check-data.sh` | yes | 80 | the real Core follows real data through create, no change, update, replacement and destroy; mistakes come back as the provider's own messages | about 6 s |
-| `run-all.sh` | | 447 / 359 | runs all of the above; health, streams, tofu and data twice (`TLS=0`, `TLS=1`); then the negative suite unless `--skip-negative` | about 30 s with `--skip-negative`, about 25 minutes without |
+| `run-all.sh` | | 448 / 360 | runs all of the above; health, streams, tofu and data twice (`TLS=0`, `TLS=1`); then the negative suite unless `--skip-negative` | about 30 s with `--skip-negative`, about 25 minutes without |
 
 **Which checks are negative** (left out by `--skip-negative`; the numbers are checks per script, default / skipped):
 
 | Script | Default / skipped | The negative checks |
 | --- | --- | --- |
 | `check-unit.sh` | 169 / 133 | every case that expects an error: a value that does not fit its type, malformed msgpack, a wrong attribute count, JSON state with mistakes, an invalid configuration |
-| `check-startup.sh` | 19 / 10 | no cookie, wrong cookie, protocol versions with nothing in common, a bad port range, a taken port |
+| `check-startup.sh` | 20 / 11 | no cookie, wrong cookie, protocol versions with nothing in common, a bad port range, a taken port |
 | `check-health.sh` | 7 / 5 | an unknown service name, a method that does not exist |
 | `check-tls.sh` | 25 / 17 | no client certificate, someone else's, plaintext, a different server certificate, the wrong name, TLS 1.1, a client certificate that is not PEM |
 | `check-build.sh` | 10 / 7 | a prefix without gRPC, no prefix, two installations mixed |
@@ -110,8 +110,8 @@ Core only ever sends good values, so the refusal paths can only be tested by sta
 
 | Group | Cases | Expected |
 | --- | --- | --- |
-| Cookie | none, wrong, right, `--debug` without one | none or wrong: exit 1 and **no handshake line**; right or `--debug`: starts; the handshake line has the exact form `1|5|tcp|127.0.0.1:PORT|grpc|` |
-| Protocol version | offered `5,6`, `6,5`, `abc,5`; only `6`, only `4`, only `abc`, nothing | answers `5` whatever the order, junk entries skipped; with no 5 on offer, or nothing offered: exit 1 |
+| Cookie | none, wrong, right, `--debug` without one | none or wrong: exit 1 and **no handshake line**; right or `--debug`: starts; the handshake line has the exact form `1|6|tcp|127.0.0.1:PORT|grpc|` |
+| Protocol version | offered `6`, `5,6`, `6,5`, `abc,6`; only `5`, only `4`, only `abc`, nothing | answers `6` whatever the order, junk entries skipped; with no 6 on offer (an old Core offering only 5 included), or nothing offered: exit 1 |
 | Port range | a one-port range; `MIN>MAX`; `MIN=abc`; no range; `--port=34580`; range with the first port taken; range of one taken port | listens on the port in range (or the one given); skips a taken port; exit 1 when none is free or values are invalid |
 
 Why "no handshake line" matters: Core is waiting for that line. A provider that has to refuse must do so *before* printing it, or Core would try to connect to something that is not there.

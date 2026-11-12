@@ -92,7 +92,7 @@ broken_provider "stdio service not registered"          check-streams.sh src/tof
 broken_provider "Shutdown service not registered"       check-streams.sh src/tofu-plugin.cpp 'builder.RegisterService(&controller_service);' '/* broken */'
 broken_provider "Shutdown service not registered"       check-tofu.sh    src/tofu-plugin.cpp 'builder.RegisterService(&controller_service);' '/* broken */'
 broken_provider "cookie check disabled"                 check-startup.sh src/tofu-plugin.cpp 'if (!debug && (cookie == nullptr'         'if (false && (cookie == nullptr'
-broken_provider "protocol version always 5"             check-startup.sh src/tofu-plugin.cpp 'if (config.protocol_version == 0) {'       'config.protocol_version = 5; if (config.protocol_version == 0) {'
+broken_provider "protocol version always 6"             check-startup.sh src/tofu-plugin.cpp 'if (config.protocol_version == 0) {'       'config.protocol_version = 6; if (config.protocol_version == 0) {'
 broken_provider "port range ignored"                    check-startup.sh src/tofu-plugin.cpp 'if (port != 0 || config.max_port == 0) {'  'if (true) {'
 broken_provider "handshake line missing its last '|'"   check-startup.sh src/tofu-plugin.cpp '"1|%d|tcp|127.0.0.1:%d|grpc|%s\n"'       '"1|%d|tcp|127.0.0.1:%d|grpc%s\n"'
 broken_provider "log line printed on stdout"            check-startup.sh src/tofu-plugin.cpp 'std::cerr << "Server listening'            'std::cout << "Server listening'
@@ -135,7 +135,7 @@ broken_provider "an object may lack attributes"              check-unit.sh  src/
 broken_provider "the sensitive flag is not sent"             "$DATA"        src/tofu-plugin.cpp 'proto_attribute->set_sensitive(attribute.sensitive);' '(void)0;'
 broken_provider "requires_replace is not sent"               "$DATA"        src/tofu-plugin.cpp 'SetPath(path, response->add_requires_replace());' '(void)path;'
 broken_provider "a diagnostic loses its attribute path"      "$DATA"        src/tofu-plugin.cpp 'if (!diagnostic.attribute.empty()) SetPath(diagnostic.attribute, proto->mutable_attribute());' '(void)0;'
-broken_provider "a warning is sent as an error"              "$DATA"        src/tofu-plugin.cpp ': tfplugin5::Diagnostic::WARNING);' ': tfplugin5::Diagnostic::ERROR);'
+broken_provider "a warning is sent as an error"              "$DATA"        src/tofu-plugin.cpp ': tfplugin6::Diagnostic::WARNING);' ': tfplugin6::Diagnostic::ERROR);'
 broken_provider "stored state is thrown away on upgrade"     "$DATA"        src/tofu-plugin.cpp 'Encode(*state, *type, "the upgraded state"' 'Encode(cty::Value::Null(), *type, "the upgraded state"'
 broken_provider "the schema loses a required flag"           "$DATA"        src/tofu-plugin.cpp 'proto_attribute->set_required(attribute.required);' '(void)0;'
 

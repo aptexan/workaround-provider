@@ -59,7 +59,7 @@ start_provider() {
   if [ "$TLS" = 1 ]; then
     command -v openssl >/dev/null || { echo "TLS=1 needs the openssl command"; exit 2; }
     make_cert client
-    TF_PLUGIN_MAGIC_COOKIE=$COOKIE PLUGIN_PROTOCOL_VERSIONS=5 PLUGIN_CLIENT_CERT="$(cat "$WORK/client.pem")" \
+    TF_PLUGIN_MAGIC_COOKIE=$COOKIE PLUGIN_PROTOCOL_VERSIONS=6 PLUGIN_CLIENT_CERT="$(cat "$WORK/client.pem")" \
       "$PROVIDER" >"$WORK/handshake" 2>/dev/null & PID=$!
   else
     "$PROVIDER" --debug >"$WORK/handshake" 2>/dev/null & PID=$!

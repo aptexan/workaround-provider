@@ -97,7 +97,7 @@ Check: `build/terraform-provider-workaround` exists and `build/CMakeCache.txt` h
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build --parallel 4
 ```
-`CMakeLists.txt` finds gRPC in `~/.local/grpc-openssl` by itself and ignores Windows folders under WSL, so no prefix option is needed. (`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` creates `build/compile_commands.json` for clangd.) Check: `./build/terraform-provider-workaround --debug --port=0` (`--debug`: the provider refuses to start by hand without OpenTofu's magic cookie) prints a handshake like `1|5|tcp|127.0.0.1:<port>|grpc|`; run it with a short timeout and kill it. If the build fails, show the first error and stop.
+`CMakeLists.txt` finds gRPC in `~/.local/grpc-openssl` by itself and ignores Windows folders under WSL, so no prefix option is needed. (`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` creates `build/compile_commands.json` for clangd.) Check: `./build/terraform-provider-workaround --debug --port=0` (`--debug`: the provider refuses to start by hand without OpenTofu's magic cookie) prints a handshake like `1|6|tcp|127.0.0.1:<port>|grpc|`; run it with a short timeout and kill it. If the build fails, show the first error and stop.
 
 ## Step 6: VSCode extensions
 
@@ -127,8 +127,8 @@ Also ensure `.vscode/extensions.json` recommends `llvm-vs-code-extensions.vscode
 
 ## Step 8: No red squiggles
 
-1. `build/compile_commands.json` must exist (step 5) and generated headers (`build/tfplugin5.pb.h`, `build/tfplugin5.grpc.pb.h`, `build/grpc_controller.pb.h`) must exist. If not, rerun step 5.
-2. Run `clangd --check=src/tofu-plugin.cpp --compile-commands-dir=build` (use `~/.local/grpc-openssl/bin/clangd` or the VSCode-managed one if `clangd` is not on PATH; the extension downloads its own into the VSCode global storage). Any `error:` diagnostics (unresolved include, unknown symbol) → fix include paths/compile database and recheck. Repeat for a generated file, e.g. `build/tfplugin5.pb.cc`.
+1. `build/compile_commands.json` must exist (step 5) and generated headers (`build/tfplugin6.pb.h`, `build/tfplugin6.grpc.pb.h`, `build/grpc_controller.pb.h`) must exist. If not, rerun step 5.
+2. Run `clangd --check=src/tofu-plugin.cpp --compile-commands-dir=build` (use `~/.local/grpc-openssl/bin/clangd` or the VSCode-managed one if `clangd` is not on PATH; the extension downloads its own into the VSCode global storage). Any `error:` diagnostics (unresolved include, unknown symbol) → fix include paths/compile database and recheck. Repeat for a generated file, e.g. `build/tfplugin6.pb.cc`.
 3. Tell the user to run **clangd: Restart language server** in VSCode if it is already open.
 4. If problems persist, follow the `vscode-clangd-setup` skill, and `vscode_enable_cpp23` if only C++23 syntax is flagged.
 
